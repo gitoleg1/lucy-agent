@@ -3,35 +3,57 @@ name: Agent CI
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - "**/*.py"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - ".github/workflows/agent.yml"
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Create venv & install
-        run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          python -m pip check
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-      - name: Lint placeholder
-        run: echo "TODO: add flake8/mypy if needed"
-
-      - name: FastAPI import smoke
+      - name: Install deps
         run: |
-          source .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest || true
+
+      - name: Sanity import fastapi
+        run: python -c "import fastapi, starlette; print('OK fastapi', fastapi.__version__)"
+
+      - name: Pip check
+        run: python -m pip check
+
+      - name: Smoke (no network)
+        run: |
           python - << 'PY'
-import importlib; importlib.import_module("fastapi"); print("fastapi: ok")
-PY
+          from fastapi import FastAPI
+          app = FastAPI()
+          @app.get("/health")
+          def h(): return {"status":"ok"}
+          print("Smoke OK")
+          PY
