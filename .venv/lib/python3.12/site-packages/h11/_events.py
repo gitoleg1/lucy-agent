@@ -92,9 +92,7 @@ class Request(Event):
         if isinstance(headers, Headers):
             object.__setattr__(self, "headers", headers)
         else:
-            object.__setattr__(
-                self, "headers", normalize_and_validate(headers, _parsed=_parsed)
-            )
+            object.__setattr__(self, "headers", normalize_and_validate(headers, _parsed=_parsed))
         if not _parsed:
             object.__setattr__(self, "method", bytesify(method))
             object.__setattr__(self, "target", bytesify(target))
@@ -147,9 +145,7 @@ class _ResponseBase(Event):
         if isinstance(headers, Headers):
             object.__setattr__(self, "headers", headers)
         else:
-            object.__setattr__(
-                self, "headers", normalize_and_validate(headers, _parsed=_parsed)
-            )
+            object.__setattr__(self, "headers", normalize_and_validate(headers, _parsed=_parsed))
         if not _parsed:
             object.__setattr__(self, "reason", bytesify(reason))
             object.__setattr__(self, "http_version", bytesify(http_version))
@@ -296,9 +292,7 @@ class Data(Event):
     chunk_start: bool
     chunk_end: bool
 
-    def __init__(
-        self, data: bytes, chunk_start: bool = False, chunk_end: bool = False
-    ) -> None:
+    def __init__(self, data: bytes, chunk_start: bool = False, chunk_end: bool = False) -> None:
         object.__setattr__(self, "data", data)
         object.__setattr__(self, "chunk_start", chunk_start)
         object.__setattr__(self, "chunk_end", chunk_end)
@@ -337,9 +331,7 @@ class EndOfMessage(Event):
     def __init__(
         self,
         *,
-        headers: Union[
-            Headers, List[Tuple[bytes, bytes]], List[Tuple[str, str]], None
-        ] = None,
+        headers: Union[Headers, List[Tuple[bytes, bytes]], List[Tuple[str, str]], None] = None,
         _parsed: bool = False,
     ) -> None:
         super().__init__()

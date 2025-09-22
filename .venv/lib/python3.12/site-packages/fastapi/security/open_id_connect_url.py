@@ -66,9 +66,7 @@ class OpenIdConnect(SecurityBase):
             ),
         ] = True,
     ):
-        self.model = OpenIdConnectModel(
-            openIdConnectUrl=openIdConnectUrl, description=description
-        )
+        self.model = OpenIdConnectModel(openIdConnectUrl=openIdConnectUrl, description=description)
         self.scheme_name = scheme_name or self.__class__.__name__
         self.auto_error = auto_error
 
@@ -76,9 +74,7 @@ class OpenIdConnect(SecurityBase):
         authorization = request.headers.get("Authorization")
         if not authorization:
             if self.auto_error:
-                raise HTTPException(
-                    status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
-                )
+                raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Not authenticated")
             else:
                 return None
         return authorization

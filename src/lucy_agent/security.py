@@ -3,6 +3,7 @@ from fastapi import Header, HTTPException, Request, status
 
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
 
+
 async def require_api_key(
     request: Request,
     x_api_key: str | None = Header(default=None, alias="X-Api-Key"),

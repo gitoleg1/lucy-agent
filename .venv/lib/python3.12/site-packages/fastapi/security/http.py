@@ -79,16 +79,12 @@ class HTTPBase(SecurityBase):
         self.scheme_name = scheme_name or self.__class__.__name__
         self.auto_error = auto_error
 
-    async def __call__(
-        self, request: Request
-    ) -> Optional[HTTPAuthorizationCredentials]:
+    async def __call__(self, request: Request) -> Optional[HTTPAuthorizationCredentials]:
         authorization = request.headers.get("Authorization")
         scheme, credentials = get_authorization_scheme_param(authorization)
         if not (authorization and scheme and credentials):
             if self.auto_error:
-                raise HTTPException(
-                    status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
-                )
+                raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Not authenticated")
             else:
                 return None
         return HTTPAuthorizationCredentials(scheme=scheme, credentials=credentials)
@@ -184,9 +180,7 @@ class HTTPBasic(HTTPBase):
         self.realm = realm
         self.auto_error = auto_error
 
-    async def __call__(  # type: ignore
-        self, request: Request
-    ) -> Optional[HTTPBasicCredentials]:
+    async def __call__(self, request: Request) -> Optional[HTTPBasicCredentials]:  # type: ignore
         authorization = request.headers.get("Authorization")
         scheme, param = get_authorization_scheme_param(authorization)
         if self.realm:
@@ -298,16 +292,12 @@ class HTTPBearer(HTTPBase):
         self.scheme_name = scheme_name or self.__class__.__name__
         self.auto_error = auto_error
 
-    async def __call__(
-        self, request: Request
-    ) -> Optional[HTTPAuthorizationCredentials]:
+    async def __call__(self, request: Request) -> Optional[HTTPAuthorizationCredentials]:
         authorization = request.headers.get("Authorization")
         scheme, credentials = get_authorization_scheme_param(authorization)
         if not (authorization and scheme and credentials):
             if self.auto_error:
-                raise HTTPException(
-                    status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
-                )
+                raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Not authenticated")
             else:
                 return None
         if scheme.lower() != "bearer":
@@ -400,16 +390,12 @@ class HTTPDigest(HTTPBase):
         self.scheme_name = scheme_name or self.__class__.__name__
         self.auto_error = auto_error
 
-    async def __call__(
-        self, request: Request
-    ) -> Optional[HTTPAuthorizationCredentials]:
+    async def __call__(self, request: Request) -> Optional[HTTPAuthorizationCredentials]:
         authorization = request.headers.get("Authorization")
         scheme, credentials = get_authorization_scheme_param(authorization)
         if not (authorization and scheme and credentials):
             if self.auto_error:
-                raise HTTPException(
-                    status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
-                )
+                raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Not authenticated")
             else:
                 return None
         if scheme.lower() != "digest":

@@ -4,6 +4,7 @@ from ..db import log_action
 
 router = APIRouter()
 
+
 @router.post("/gads", response_model=ActionResult)
 async def run_gads(req: ActionRequest):
     # Placeholder בלבד – מימוש יבוא בהמשך

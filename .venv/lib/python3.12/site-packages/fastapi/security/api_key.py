@@ -13,9 +13,7 @@ class APIKeyBase(SecurityBase):
     def check_api_key(api_key: Optional[str], auto_error: bool) -> Optional[str]:
         if not api_key:
             if auto_error:
-                raise HTTPException(
-                    status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
-                )
+                raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Not authenticated")
             return None
         return api_key
 

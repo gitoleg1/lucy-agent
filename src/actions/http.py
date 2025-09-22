@@ -1,10 +1,12 @@
 from fastapi import APIRouter
 from typing import Optional, Dict, Any
-import httpx, json
+import httpx
+import json
 from ..models import ActionRequest, ActionResult
 from ..db import log_action
 
 router = APIRouter()
+
 
 @router.post("/http", response_model=ActionResult)
 async def run_http(req: ActionRequest):

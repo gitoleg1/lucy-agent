@@ -5,6 +5,7 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)(AGENT_API_KEY)=([^\s]+)"),
 ]
 
+
 def redact(text: str | None) -> str | None:
     if text is None:
         return None

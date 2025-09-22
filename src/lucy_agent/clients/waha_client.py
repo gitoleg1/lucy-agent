@@ -3,6 +3,7 @@ import os
 import httpx
 from typing import Any, Dict, Optional, List
 
+
 class WahaClient:
     def __init__(self) -> None:
         base = os.getenv("WAHA_BASE", "http://127.0.0.1:3000").rstrip("/")
@@ -29,7 +30,9 @@ class WahaClient:
             r.raise_for_status()
             return r.json()
 
-    def send_text(self, chat_id: str, text: str, quoted_msg_id: Optional[str] = None) -> Dict[str, Any]:
+    def send_text(
+        self, chat_id: str, text: str, quoted_msg_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         שולח טקסט ל-WAHA. קודם כל מנסה /api/sendText (עם/בלי ?session=),
         ורק אחר כך גרסאות נוספות. עוצר בהצלחה הראשונה; מחזיר JSON.
@@ -50,7 +53,6 @@ class WahaClient:
         paths = [
             ("/api/sendText", True),
             ("/api/sendText", False),
-
             # גיבויים אפשריים—לא חובה אצלך, אבל נשאיר למקרה ותחליף מנוע
             ("/api/v1/sendText", True),
             ("/api/v1/sendText", False),
@@ -67,7 +69,9 @@ class WahaClient:
                         r = c.post(url, headers=self.headers, json=payload)
                         if r.status_code in (404, 405):
                             # לא הנתיב הזה—נמשיך לנסות אחרים
-                            last_exc = httpx.HTTPStatusError("not found/method", request=r.request, response=r)
+                            last_exc = httpx.HTTPStatusError(
+                                "not found/method", request=r.request, response=r
+                            )
                             continue
                         r.raise_for_status()
                         return r.json()

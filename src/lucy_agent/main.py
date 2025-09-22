@@ -5,7 +5,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import uuid, asyncio
+import uuid
+import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -17,10 +18,17 @@ from lucy_agent.orchestrator import run_task
 from lucy_agent.routers import events as events_router
 
 app = FastAPI()
-from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000","http://127.0.0.1:3000","http://localhost:3001","http://127.0.0.1:3001","http://localhost:3002","http://127.0.0.1:3002"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,11 +37,11 @@ app.add_middleware(
 from fastapi.middleware.cors import CORSMiddleware
 
 
-
 # CORS ל-UI מקומי
 
 # חיבור ראוטר ה-SSE
 app.include_router(events_router.router)
+
 
 # יצירת טבלאות בהפעלה
 @app.on_event("startup")
@@ -41,14 +49,17 @@ async def _db_startup_create_tables():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+
 # ---- Schemas
 class StepCreate(BaseModel):
     type: str
     params: Dict[str, Any] = {}
 
+
 class TaskCreate(BaseModel):
     title: str
     steps: List[StepCreate]
+
 
 class StepOut(BaseModel):
     id: str
@@ -61,6 +72,7 @@ class StepOut(BaseModel):
     ended_at: Optional[datetime] = None
     exit_code: Optional[int] = None
 
+
 class TaskOut(BaseModel):
     id: str
     title: str
@@ -69,6 +81,7 @@ class TaskOut(BaseModel):
     started_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None
     steps: List[StepOut] = []
+
 
 def _task_to_out(task: TaskORM) -> TaskOut:
     return TaskOut(
@@ -93,6 +106,7 @@ def _task_to_out(task: TaskORM) -> TaskOut:
             for st in (task.steps or [])
         ],
     )
+
 
 # ---- Routes
 @app.post("/tasks", response_model=TaskOut)
@@ -127,6 +141,7 @@ async def post_tasks(payload: TaskCreate, session: AsyncSession = Depends(get_se
     task = res.scalar_one()
     return _task_to_out(task)
 
+
 @app.get("/tasks", response_model=List[TaskOut])
 async def list_tasks(session: AsyncSession = Depends(get_session)):
     res = await session.execute(
@@ -134,6 +149,7 @@ async def list_tasks(session: AsyncSession = Depends(get_session)):
     )
     tasks = res.scalars().unique().all()
     return [_task_to_out(t) for t in tasks]
+
 
 @app.get("/tasks/{task_id}", response_model=TaskOut)
 async def get_task(task_id: str, session: AsyncSession = Depends(get_session)):

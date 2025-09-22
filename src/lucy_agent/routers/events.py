@@ -1,5 +1,7 @@
 from __future__ import annotations
-import asyncio, json, time
+import asyncio
+import json
+import time
 from typing import AsyncIterator
 from fastapi import APIRouter, Depends
 from starlette.responses import StreamingResponse
@@ -11,6 +13,7 @@ router = APIRouter(
     dependencies=[Depends(require_api_key)],
 )
 
+
 def _sse(event: str | None, data: dict) -> bytes:
     """מייצר אירוע SSE תקין"""
     payload = json.dumps(data, ensure_ascii=False)
@@ -21,6 +24,7 @@ def _sse(event: str | None, data: dict) -> bytes:
         lines.append(f"data: {line}")
     lines.append("")  # שורה ריקה בין אירועים
     return ("\n".join(lines) + "\n").encode("utf-8")
+
 
 async def _gen(task_id: str) -> AsyncIterator[bytes]:
     # התחלה
@@ -35,7 +39,12 @@ async def _gen(task_id: str) -> AsyncIterator[bytes]:
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     yield _sse("done", {"task_id": task_id, "ts": now, "payload": {"status": "SUCCEEDED"}})
 
-@router.get("/tasks/{task_id}", summary="SSE Task Events", description="SSE endpoint: /stream/tasks/{task_id}")
+
+@router.get(
+    "/tasks/{task_id}",
+    summary="SSE Task Events",
+    description="SSE endpoint: /stream/tasks/{task_id}",
+)
 async def sse_task_events(task_id: str):
     return StreamingResponse(
         _gen(task_id),

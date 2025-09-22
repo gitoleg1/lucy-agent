@@ -4,6 +4,7 @@ from ..db import log_action
 
 router = APIRouter()
 
+
 @router.post("/waha", response_model=ActionResult)
 async def run_waha(req: ActionRequest):
     # Placeholder בלבד – מימוש יבוא בהמשך

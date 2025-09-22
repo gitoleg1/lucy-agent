@@ -370,9 +370,7 @@ class OAuth2(SecurityBase):
             ),
         ] = True,
     ):
-        self.model = OAuth2Model(
-            flows=cast(OAuthFlowsModel, flows), description=description
-        )
+        self.model = OAuth2Model(flows=cast(OAuthFlowsModel, flows), description=description)
         self.scheme_name = scheme_name or self.__class__.__name__
         self.auto_error = auto_error
 
@@ -380,9 +378,7 @@ class OAuth2(SecurityBase):
         authorization = request.headers.get("Authorization")
         if not authorization:
             if self.auto_error:
-                raise HTTPException(
-                    status_code=HTTP_403_FORBIDDEN, detail="Not authenticated"
-                )
+                raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Not authenticated")
             else:
                 return None
         return authorization
@@ -641,7 +637,9 @@ class SecurityScopes:
                 The list of all the scopes required by dependencies.
                 """
             ),
-        ] = scopes or []
+        ] = (
+            scopes or []
+        )
         self.scope_str: Annotated[
             str,
             Doc(

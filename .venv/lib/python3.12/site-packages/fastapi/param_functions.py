@@ -155,9 +155,7 @@ def Path(  # noqa: N802
             RegEx pattern for strings.
             """
         ),
-        deprecated(
-            "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
-        ),
+        deprecated("Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."),
     ] = None,
     discriminator: Annotated[
         Union[str, None],
@@ -480,9 +478,7 @@ def Query(  # noqa: N802
             RegEx pattern for strings.
             """
         ),
-        deprecated(
-            "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
-        ),
+        deprecated("Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."),
     ] = None,
     discriminator: Annotated[
         Union[str, None],
@@ -795,9 +791,7 @@ def Header(  # noqa: N802
             RegEx pattern for strings.
             """
         ),
-        deprecated(
-            "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
-        ),
+        deprecated("Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."),
     ] = None,
     discriminator: Annotated[
         Union[str, None],
@@ -1100,9 +1094,7 @@ def Cookie(  # noqa: N802
             RegEx pattern for strings.
             """
         ),
-        deprecated(
-            "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
-        ),
+        deprecated("Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."),
     ] = None,
     discriminator: Annotated[
         Union[str, None],
@@ -1427,9 +1419,7 @@ def Body(  # noqa: N802
             RegEx pattern for strings.
             """
         ),
-        deprecated(
-            "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
-        ),
+        deprecated("Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."),
     ] = None,
     discriminator: Annotated[
         Union[str, None],
@@ -1742,9 +1732,7 @@ def Form(  # noqa: N802
             RegEx pattern for strings.
             """
         ),
-        deprecated(
-            "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
-        ),
+        deprecated("Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."),
     ] = None,
     discriminator: Annotated[
         Union[str, None],
@@ -2056,9 +2044,7 @@ def File(  # noqa: N802
             RegEx pattern for strings.
             """
         ),
-        deprecated(
-            "Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."
-        ),
+        deprecated("Deprecated in FastAPI 0.100.0 and Pydantic v2, use `pattern` instead."),
     ] = None,
     discriminator: Annotated[
         Union[str, None],

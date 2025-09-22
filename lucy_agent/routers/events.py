@@ -13,8 +13,10 @@ ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") i
 STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 VERSION = "0.1.0"
 
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
 
 def _sse_event(event: str | None, data: dict | str, *, event_id: int | None = None) -> bytes:
     """
@@ -35,6 +37,7 @@ def _sse_event(event: str | None, data: dict | str, *, event_id: int | None = No
     lines.append("")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
+
 def _pick_cors_origin(request: Request) -> str | None:
     """
     בוחר Origin להחזרת Access-Control-Allow-Origin אם מותר.
@@ -48,6 +51,7 @@ def _pick_cors_origin(request: Request) -> str | None:
         return origin
     return None
 
+
 @router.get("/stream/tasks/{task_id}")
 async def stream_task(task_id: str, request: Request, _: bool = Depends(require_api_key)):
     """
@@ -56,13 +60,20 @@ async def stream_task(task_id: str, request: Request, _: bool = Depends(require_
     - כל אירוע כולל: id/ts/seq/task_id.
     - כותרות CORS ל-SSE לפי Origin.
     """
+
     async def gen():
         yield b"retry: 3000\n\n"
 
         eid = 1
         yield _sse_event(
             "started",
-            {"event": "started", "ts": now_iso(), "task_id": task_id, "seq": 0, "status": "STARTED"},
+            {
+                "event": "started",
+                "ts": now_iso(),
+                "task_id": task_id,
+                "seq": 0,
+                "status": "STARTED",
+            },
             event_id=eid,
         )
         eid += 1
@@ -78,7 +89,13 @@ async def stream_task(task_id: str, request: Request, _: bool = Depends(require_
 
         yield _sse_event(
             "done",
-            {"event": "done", "ts": now_iso(), "task_id": task_id, "seq": 9999, "status": "SUCCEEDED"},
+            {
+                "event": "done",
+                "ts": now_iso(),
+                "task_id": task_id,
+                "seq": 9999,
+                "status": "SUCCEEDED",
+            },
             event_id=eid,
         )
 
@@ -95,6 +112,7 @@ async def stream_task(task_id: str, request: Request, _: bool = Depends(require_
 
     return StreamingResponse(gen(), media_type="text/event-stream", headers=headers)
 
+
 @router.get("/auth/check")
 async def auth_check(_: bool = Depends(require_api_key)):
     """
@@ -102,10 +120,14 @@ async def auth_check(_: bool = Depends(require_api_key)):
     """
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+
 @router.get("/health")
 async def health():
     return JSONResponse({"status": "ok"}, status_code=status.HTTP_200_OK)
 
+
 @router.get("/version")
 async def version():
-    return JSONResponse({"version": VERSION, "started_at": STARTED_AT}, status_code=status.HTTP_200_OK)
+    return JSONResponse(
+        {"version": VERSION, "started_at": STARTED_AT}, status_code=status.HTTP_200_OK
+    )

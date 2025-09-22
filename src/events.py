@@ -3,12 +3,17 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import AsyncIterator, Dict, Any, Optional
-import asyncio, json, time, re, datetime as dt
+import asyncio
+import json
+import time
+import re
+import datetime as dt
 
 router = APIRouter(prefix="/stream", tags=["stream"])
 
 # === EventBus מינימלי לדוגמה (אפשר להחליף בבאסים הפנימי שלך) ===
 _event_queues: Dict[str, "asyncio.Queue[Dict[str, Any]]"] = {}
+
 
 def get_queue(task_id: str) -> "asyncio.Queue[Dict[str, Any]]":
     q = _event_queues.get(task_id)
@@ -17,11 +22,14 @@ def get_queue(task_id: str) -> "asyncio.Queue[Dict[str, Any]]":
         _event_queues[task_id] = q
     return q
 
+
 async def publish_update(task_id: str, payload: Dict[str, Any]) -> None:
     await get_queue(task_id).put({"type": "update", "data": payload, "ts": time.time()})
 
+
 async def publish_done(task_id: str, payload: Dict[str, Any]) -> None:
     await get_queue(task_id).put({"type": "done", "data": payload, "ts": time.time()})
+
 
 # === מודלים ===
 class TaskEvent(BaseModel):
@@ -29,9 +37,11 @@ class TaskEvent(BaseModel):
     data: Optional[Dict[str, Any] | str] = None
     ts: float
 
+
 # === עזרי זמן/פורמט ===
 def now_iso() -> str:
     return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
 
 def sse_event(event: str, data: Dict[str, Any] | None) -> bytes:
     payload = "" if data is None else json.dumps(data, ensure_ascii=False, separators=(",", ":"))
@@ -39,9 +49,13 @@ def sse_event(event: str, data: Dict[str, Any] | None) -> bytes:
     out += f"data: {payload}\n\n"
     return out.encode("utf-8")
 
+
 # === נירמול נתונים שמגיעים מה-runner (גם אם הם repr של אובייקט) ===
 _STATUS_TERMINAL = {"SUCCEEDED", "FAILED", "CANCELLED"}
-_RE_STATUS = re.compile(r"status(?:=|:)\s*<[^>]*:\s*'([A-Z]+)'>|status(?:=|:)\s*'([A-Z]+)'", re.IGNORECASE)
+_RE_STATUS = re.compile(
+    r"status(?:=|:)\s*<[^>]*:\s*'([A-Z]+)'>|status(?:=|:)\s*'([A-Z]+)'", re.IGNORECASE
+)
+
 
 def normalize_update_payload(task_id: str, raw: Any) -> Dict[str, Any]:
     """
@@ -60,6 +74,7 @@ def normalize_update_payload(task_id: str, raw: Any) -> Dict[str, Any]:
         base["data"]["status"] = status.upper()
     return base
 
+
 def payload_is_terminal(data: Dict[str, Any]) -> bool:
     """
     מזהה סיום לפי data.status אם קיים (גם אם חולץ מ-repr).
@@ -72,6 +87,7 @@ def payload_is_terminal(data: Dict[str, Any]) -> bool:
     if isinstance(status, str):
         return status.upper() in _STATUS_TERMINAL
     return False
+
 
 async def _event_stream(task_id: str) -> AsyncIterator[bytes]:
     queue = get_queue(task_id)
@@ -93,16 +109,31 @@ async def _event_stream(task_id: str) -> AsyncIterator[bytes]:
                     norm = normalize_update_payload(task_id, evt_obj.data)
                     yield sse_event("update", norm)
                     if payload_is_terminal(norm):
-                        yield sse_event("done", {"task_id": task_id, "ts": now_iso(), "data": norm.get("data", {})})
+                        yield sse_event(
+                            "done",
+                            {"task_id": task_id, "ts": now_iso(), "data": norm.get("data", {})},
+                        )
                         break
 
                 elif evt_obj.type == "done":
-                    norm = {"task_id": task_id, "ts": now_iso(), "data": evt_obj.data if isinstance(evt_obj.data, dict) else {"raw": str(evt_obj.data)}}
+                    norm = {
+                        "task_id": task_id,
+                        "ts": now_iso(),
+                        "data": (
+                            evt_obj.data
+                            if isinstance(evt_obj.data, dict)
+                            else {"raw": str(evt_obj.data)}
+                        ),
+                    }
                     yield sse_event("done", norm)
                     break
 
                 else:
-                    norm = {"task_id": task_id, "ts": now_iso(), "data": {"raw": evt_obj.data, "note": "unknown_event_type"}}
+                    norm = {
+                        "task_id": task_id,
+                        "ts": now_iso(),
+                        "data": {"raw": evt_obj.data, "note": "unknown_event_type"},
+                    }
                     yield sse_event("update", norm)
 
             except asyncio.TimeoutError:
@@ -114,6 +145,7 @@ async def _event_stream(task_id: str) -> AsyncIterator[bytes]:
         return
     except Exception:
         return
+
 
 @router.get("/tasks/{task_id}")
 async def stream_task_events(request: Request, task_id: str):

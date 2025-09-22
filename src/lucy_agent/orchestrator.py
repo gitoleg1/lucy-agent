@@ -8,18 +8,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from .db import SessionLocal
-from .models import Task as TaskORM, Step as StepORM, EventLog, RunStatus
+from .models import Task as TaskORM, EventLog, RunStatus
 
 UTC = timezone.utc
 
-async def _log(session: AsyncSession, task_id: str, event_type: str, payload: Dict[str, Any] | None):
-    session.add(EventLog(
-        task_id=task_id,
-        ts=datetime.now(UTC),
-        event_type=event_type,
-        payload=payload or {}
-    ))
+
+async def _log(
+    session: AsyncSession, task_id: str, event_type: str, payload: Dict[str, Any] | None
+):
+    session.add(
+        EventLog(
+            task_id=task_id, ts=datetime.now(UTC), event_type=event_type, payload=payload or {}
+        )
+    )
     await session.flush()
+
 
 async def run_task(task_id: str):
     """מריץ משימה (כרגע צעד shell אחד), מעדכן סטטוסים ושומר לוגים ב־DB."""
@@ -66,24 +69,36 @@ async def run_task(task_id: str):
             step.stdout = (stdout_b or b"").decode(errors="replace")
             step.stderr = (stderr_b or b"").decode(errors="replace")
             step.ended_at = datetime.now(UTC)
-            step.status = RunStatus.succeeded.value if proc.returncode == 0 else RunStatus.failed.value
+            step.status = (
+                RunStatus.succeeded.value if proc.returncode == 0 else RunStatus.failed.value
+            )
 
             task.status = step.status
             task.ended_at = datetime.now(UTC)
 
-            await _log(session, task_id, "update", {
-                "step_id": step.id,
-                "exit_code": step.exit_code,
-                "stdout_len": len(step.stdout or ""),
-                "stderr_len": len(step.stderr or ""),
-                "status": step.status,
-            })
+            await _log(
+                session,
+                task_id,
+                "update",
+                {
+                    "step_id": step.id,
+                    "exit_code": step.exit_code,
+                    "stdout_len": len(step.stdout or ""),
+                    "stderr_len": len(step.stderr or ""),
+                    "status": step.status,
+                },
+            )
             await session.commit()
 
-            await _log(session, task_id, "done", {
-                "status": task.status,
-                "result": {"task_id": task.id, "title": task.title, "status": task.status}
-            })
+            await _log(
+                session,
+                task_id,
+                "done",
+                {
+                    "status": task.status,
+                    "result": {"task_id": task.id, "title": task.title, "status": task.status},
+                },
+            )
             await session.commit()
 
         except Exception as e:
