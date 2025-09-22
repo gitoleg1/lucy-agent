@@ -1,0 +1,73 @@
+from __future__ import annotations
+from fastapi import APIRouter, Depends, Request
+from sse_starlette.sse import EventSourceResponse
+from typing import AsyncGenerator, Dict, Any
+import asyncio, json, datetime as dt
+
+from ..security import require_api_key
+from ..orchestrator import get_task
+
+router = APIRouter(prefix="/stream", tags=["stream"])
+
+def _now_iso() -> str:
+    return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+async def _gen_task_events(task_id: str, request: Request) -> AsyncGenerator[Dict[str, Any], None]:
+    """
+    זורם אירועים:
+      - event: heartbeat   data: {"ts": ...}
+      - event: update      data: {task json} (רק כשיש שינוי)
+      - event: done        data: {final task json} ואז יוצא מהלולאה
+    נשאר פתוח עד ניתוק לקוח או DONE.
+    """
+    last_snapshot = None
+    heartbeat_every = 15  # שניות
+    poll_every = 1        # שניות
+    hb = 0
+
+    while True:
+        # ניתוק לקוח?
+        if await request.is_disconnected():
+            return
+
+        # heartbeat בקצב קבוע גם אם אין שינוי
+        if hb <= 0:
+            yield {
+                "event": "heartbeat",
+                "data": json.dumps({"ts": _now_iso()}),
+            }
+            hb = heartbeat_every
+
+        # בדיקת מצב משימה
+        task = get_task(task_id)
+        if task is not None:
+            cur = json.dumps(task, default=str, ensure_ascii=False)
+            if cur != last_snapshot:
+                last_snapshot = cur
+                yield {
+                    "event": "update",
+                    "data": cur,
+                }
+            # אם הסתיימה — שולחים done ויוצאים
+            status = str(task.get("status", "")).upper()
+            if status in ("SUCCEEDED", "FAILED", "CANCELLED"):
+                yield {
+                    "event": "done",
+                    "data": last_snapshot or cur,
+                }
+                return
+
+        await asyncio.sleep(poll_every)
+        hb -= poll_every
+
+@router.get("/tasks/{task_id}", dependencies=[Depends(require_api_key)])
+async def stream_task(task_id: str, request: Request):
+    return EventSourceResponse(
+        _gen_task_events(task_id, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+        ping=0,  # אנחנו מנהלים heartbeat ידני
+    )
