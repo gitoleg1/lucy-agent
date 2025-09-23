@@ -1,4 +1,18 @@
 from __future__ import annotations
+
+import os
+import json
+import time
+import subprocess
+from uuid import uuid4
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
+from sqlalchemy import select, func
+from sqlalchemy.inspection import inspect as sa_inspect
+
 from ..db.session import get_session
 from ..models.tasks import (
     Task,
@@ -10,21 +24,6 @@ from ..models.tasks import (
     now_iso,
 )
 from ..services.audit import write_audit
-from datetime import datetime
-from fastapi import APIRouter, HTTPException, Request
-from pathlib import Path
-from pydantic import BaseModel
-from pydantic import BaseModel, Field
-from sqlalchemy import func
-from sqlalchemy import select
-from sqlalchemy.inspection import inspect as sa_inspect
-from typing import Any, Dict, List, Literal, Optional
-from typing import List
-from uuid import uuid4
-import json
-import os
-import subprocess
-import time
 
 
 def _fix_timeout_semantics(result):
@@ -34,7 +33,7 @@ def _fix_timeout_semantics(result):
     עובד גם כשמחזירים מודל של Pydantic וגם dict.
     """
     try:
-        # פירוק למילון
+        # פרק לאובייקט dict
         if hasattr(result, "model_dump"):
             data = result.model_dump()
         elif hasattr(result, "dict"):
@@ -48,13 +47,14 @@ def _fix_timeout_semantics(result):
         runs = data.get("runs") or []
         audit = data.get("audit") or []
 
-        # מצא הריצה האחרונה (אם יש כמה, נתקן את כולן ששוות -1)
         try:
+            import os
+
             timeout_exit = int(os.getenv("LUCY_AUTOPILOT_TIMEOUT_EXIT", "124"))
         except Exception:
             timeout_exit = 124
 
-        # נבנה מפה של action_id -> רשומות audit_end רלוונטיות
+        # בנה מיפוי action_id -> אירועי action_end
         end_by_action = {}
         for ev in audit:
             try:
@@ -65,24 +65,20 @@ def _fix_timeout_semantics(result):
             except Exception:
                 pass
 
-        # תקן כל run עם exit_code == -1
+        # נרמל כל run עם exit_code == -1 (timeout ישן)
         for r in runs:
             try:
                 if r.get("exit_code") == -1:
                     r["exit_code"] = timeout_exit
                     aid = r.get("action_id")
-                    # עדכן audit_end מתאים
                     if aid and aid in end_by_action:
                         for ev in end_by_action[aid]:
                             evd = ev.setdefault("data", {})
-                            # סמני timeout
                             evd["timeout"] = True
-                            # וודאי שהtails הם string (לא null)
                             if evd.get("stdout_tail") is None:
                                 evd["stdout_tail"] = ""
                             if evd.get("stderr_tail") is None:
                                 evd["stderr_tail"] = ""
-                            # אופציונלי: אם אין exit_code בעקבה, השווה ל-run
                             evd["exit_code"] = r["exit_code"]
             except Exception:
                 pass
@@ -93,22 +89,6 @@ def _fix_timeout_semantics(result):
         return result
 
 
-
-
-
-    Task,
-    Action,
-    Run,
-    Approval,
-    AuditLog,
-    TaskStatus,
-    now_iso,
-)
-
-
-# --- helper to map desired statuses to DB-allowed values ---
-
-# ===== Router =====
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 
