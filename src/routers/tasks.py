@@ -25,16 +25,6 @@ from ..services.audit import write_audit
 
 
 # --- helper to map desired statuses to DB-allowed values ---
-def _pick_status(enum_values, *candidates, default=None):
-    if isinstance(enum_values, (list, tuple)) and enum_values:
-        ev_l = [str(v) for v in enum_values]
-        for cand in candidates:
-            for v in ev_l:
-                if v.lower() == str(cand).lower():
-                    return v
-        return default or ev_l[0]
-    return default or (candidates[0] if candidates else None)
-
 
 # ===== Router =====
 router = APIRouter(prefix="/tasks", tags=["tasks"])
