@@ -1,0 +1,729 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+from uuid import uuid4
+
+from fastapi import APIRouter, HTTPException
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+
+from ..db.session import get_session
+from ..models.tasks import (
+    Task,
+    Action,
+    Run,
+    Approval,
+    AuditLog,
+    TaskStatus,
+    RunStatus,
+    now_iso,
+)
+from ..services.audit import write_audit
+# --- helper to map desired statuses to DB-allowed values ---
+def _pick_status(enum_values, *candidates, default=None):
+    if isinstance(enum_values, (list, tuple)) and enum_values:
+        ev_l = [str(v) for v in enum_values]
+        for cand in candidates:
+            for v in ev_l:
+                if v.lower() == str(cand).lower():
+                    return v
+        return default or ev_l[0]
+    return default or (candidates[0] if candidates else None)
+
+# ===== Router =====
+router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+# ===== Schemas =====
+class ActionIn(BaseModel):
+    type: Literal["shell"] = "shell"
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    require_approval: bool = False
+    actions: List[ActionIn] = Field(default_factory=list)
+
+class ApprovalIn(BaseModel):
+    token: str
+    decision: Literal["APPROVE", "REJECT"]
+    decided_by: str
+
+class RunOut(BaseModel):
+    id: str
+    task_id: str
+    action_id: str
+    status: str
+    started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    stdout_path: Optional[str] = None
+    stderr_path: Optional[str] = None
+    exit_code: Optional[int] = None
+
+class AuditOut(BaseModel):
+    id: str
+    task_id: str
+    event: str
+    data: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+class TaskOut(BaseModel):
+    id: str
+    title: str
+    description: Optional[str]
+    status: str
+    require_approval: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    approvals: List[Dict[str, Any]] = Field(default_factory=list)
+
+# ===== Helpers =====
+RUNS_BASE = Path.home() / ".local" / "share" / "lucy-agent" / "runs"
+RUNS_BASE.mkdir(parents=True, exist_ok=True)
+
+def _task_to_out(s, task: Task) -> TaskOut:
+    approvals: List[Dict[str, Any]] = []
+    try:
+        aps = s.execute(select(Approval).where(Approval.task_id == task.id)).scalars().all()
+        for a in aps:
+            approvals.append(
+                {
+                    "id": a.id,
+                    "task_id": a.task_id,
+                    "token": a.token,
+                    "decision": a.decision,
+                    "decided_by": a.decided_by,
+                    "decided_at": a.decided_at,
+                    "created_at": a.created_at,
+                    "expires_at": a.expires_at,
+                }
+            )
+    except Exception:
+        approvals = []
+
+    return TaskOut(
+        id=task.id,
+        title=task.title,
+        description=task.description,
+        status=task.status,
+        require_approval=task.require_approval,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+        started_at=task.started_at,
+        ended_at=task.ended_at,
+        approvals=approvals,
+    )
+
+# ===== Endpoints =====
+
+@router.post("/", response_model=TaskOut)
+def create_task(payload: TaskCreate):
+    # מחרוזות סטטוס כדי לא להיות תלויים ב-Enum ספציפי
+    status_value = "WAITING_APPROVAL" if payload.require_approval else "PENDING"
+    now = now_iso()
+    with get_session() as s:
+        # Task
+        task = Task(
+            id=str(uuid4()),
+            title=payload.title,
+            description=payload.description,
+            status=status_value,
+            require_approval=1 if payload.require_approval else 0,
+            created_at=now,
+            updated_at=now,
+            started_at=None,
+            ended_at=None,
+        )
+        s.add(task)
+        safe_commit(s)
+
+        # Approval (אם נדרש)
+        if payload.require_approval:
+            ap = Approval(
+                id=str(uuid4()),
+                task_id=task.id,
+                token=str(uuid4()),
+                decision=None,
+                decided_by=None,
+                decided_at=None,
+                created_at=now,
+                expires_at=None,
+            )
+            s.add(ap)
+
+        # Actions עם idx (פותר NOT NULL על actions.idx)
+        for i, a in enumerate(payload.actions or []):
+            params_json = json.dumps(a.params or {})
+            act = Action(
+                id=str(uuid4()),
+                task_id=task.id,
+                idx=i,
+                type=a.type,
+                params_json=params_json,
+                created_at=now,
+                updated_at=now,
+            )
+            s.add(act)
+
+        safe_commit(s)
+
+        # Audit
+        write_audit(
+            s,
+            task_id=task.id,
+            event="task_created",
+            data={
+                "title": task.title,
+                "require_approval": bool(task.require_approval),
+                "actions_count": len(payload.actions or []),
+            },
+        )
+
+        return _task_to_out(s, task)
+
+@router.get("/{task_id}", response_model=TaskOut)
+def get_task(task_id: str):
+    with get_session() as s:
+        t = s.execute(select(Task).where(Task.id == task_id)).scalars().first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return _task_to_out(s, t)
+
+
+@router.post("/{task_id}/approve", response_model=TaskOut)
+def approve_task(task_id: str, body: ApprovalIn):
+    with get_session() as s:
+        t = s.execute(select(Task).where(Task.id == task_id)).scalars().first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        ap = s.execute(select(Approval).where(Approval.task_id == task_id)).scalars().first()
+        if not ap or ap.token != body.token:
+            raise HTTPException(status_code=400, detail="Invalid approval token")
+
+        ap.decision = body.decision
+        ap.decided_by = body.decided_by
+        ap.decided_at = now_iso()
+        t.status = "APPROVED" if body.decision == "APPROVE" else TaskStatus.REJECTED
+        t.updated_at = now_iso()
+
+        write_audit(
+            s,
+            task_id=task_id,
+            event="approval_decided",
+            data={"decision": body.decision, "by": body.decided_by},
+            message="approval decided",
+        )
+
+        safe_commit(s)
+        return _task_to_out(s, t)
+
+
+@router.post("/{task_id}/run", response_model=List[RunOut])
+def run_task(task_id: str):
+    with get_session() as s:
+        t = s.execute(select(Task).where(Task.id == task_id)).scalars().first()
+        if not t:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        if t.require_approval and t.status != "APPROVED":
+            raise HTTPException(status_code=400, detail="Task requires approval")
+
+        acts = s.execute(select(Action).where(Action.task_id == task_id)).scalars().all()
+        if not acts:
+            raise HTTPException(status_code=400, detail="No actions to run")
+
+        results: List[RunOut] = []
+
+        for a in acts:
+            if a.type != "shell":
+                raise HTTPException(status_code=400, detail=f"Unsupported action type: {a.type}")
+
+            params = json.loads(a.params_json or "{}")
+            cmd = params.get("cmd")
+            if not cmd:
+                raise HTTPException(status_code=400, detail="shell action missing 'cmd'")
+
+            run_id = str(uuid4())
+            run_dir = RUNS_BASE / run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+            stdout_p = run_dir / "stdout.log"
+            stderr_p = run_dir / "stderr.log"
+
+            r = Run(
+                id=run_id,
+                action_id=a.id,
+                status="RUNNING",
+                started_at=now_iso(),
+                ended_at=None,
+                exit_code=None,
+                stdout_path=str(stdout_p),
+                stderr_path=str(stderr_p),
+            )
+            s.add(r)
+            safe_commit(s)
+
+            write_audit(
+                s,
+                task_id=task_id,
+                event="action_start",
+                data={"action_id": a.id, "type": a.type, "cmd": cmd},
+                run_id=run_id,
+                action_id=a.id,
+                message="action started",
+            )
+
+            try:
+                with open(stdout_p, "wb") as out, open(stderr_p, "wb") as err:
+                    proc = subprocess.run(
+                        cmd,
+                        shell=True,
+                        stdout=out,
+                        stderr=err,
+                        cwd=os.path.expanduser("~"),
+                    )
+                exit_code = int(proc.returncode)
+                r.exit_code = exit_code
+                r.status = "SUCCEEDED" if exit_code == 0 else "FAILED"
+                r.ended_at = now_iso()
+                safe_commit(s)
+
+                write_audit(
+                    s,
+                    task_id=task_id,
+                    event="action_end",
+                    data={"action_id": a.id, "exit_code": exit_code},
+                    run_id=run_id,
+                    action_id=a.id,
+                    message="action ended",
+                )
+
+            except Exception as e:
+                r.status = "FAILED"
+                r.ended_at = now_iso()
+                r.exit_code = -1
+                safe_commit(s)
+
+                write_audit(
+                    s,
+                    task_id=task_id,
+                    event="action_error",
+                    data={"action_id": a.id, "error": repr(e)},
+                    run_id=run_id,
+                    action_id=a.id,
+                    message=f"action error: {e!r}",
+                )
+
+            results.append(
+                RunOut(
+                    id=r.id,
+                    task_id=task_id,
+                    action_id=r.action_id,
+                    status=r.status,
+                    started_at=r.started_at,
+                    ended_at=r.ended_at,
+                    stdout_path=r.stdout_path,
+                    stderr_path=r.stderr_path,
+                    exit_code=r.exit_code,
+                )
+            )
+
+        t.status = "FAILED" if any(ro.status == "FAILED" for ro in results) else "SUCCEEDED"
+        t.updated_at = now_iso()
+        safe_commit(s)
+
+        return results
+
+
+@router.get("/{task_id}/audit", response_model=List[AuditOut])
+def get_audit(task_id: str):
+    with get_session() as s:
+        rows = (
+            s.execute(
+                select(AuditLog)
+                .where(AuditLog.task_id == task_id)
+                .order_by(AuditLog.created_at.asc())
+            )
+            .scalars()
+            .all()
+        )
+
+        out: List[AuditOut] = []
+        for r in rows:
+            event = (
+                getattr(r, "event_type", None)
+                or getattr(r, "event", None)
+                or getattr(r, "type", None)
+                or "event"
+            )
+            raw = getattr(r, "data_json", None) or getattr(r, "data", None)
+            try:
+                data = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            except Exception:
+                data = {}
+            out.append(
+                AuditOut(
+                    id=r.id,
+                    task_id=task_id,
+                    event=event,
+                    data=data,
+                    created_at=r.created_at,
+                )
+            )
+        return out
+
+@router.post("/{task_id}/run", response_model=List[RunOut])
+def run_task(task_id: str):
+    # מריץ את כל פעולות ה-shell של הטסק, כותב stdout/stderr לקבצים, ומחזיר List[RunOut]
+    from sqlalchemy import select
+
+    runs_out: List[RunOut] = []
+    with get_session() as s:
+        task = s.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # שלוף פעולות לפי task_id, ממויין לפי idx אם יש
+        acts = list(s.execute(select(Action).where(Action.task_id == task_id)).scalars())
+        acts.sort(key=lambda a: (a.idx if a.idx is not None else 10**9))
+
+        for a in acts:
+            if a.type != "shell":
+                raise HTTPException(status_code=400, detail=f"Unsupported action type: {a.type}")
+
+            params = json.loads(a.params_json or "{}")
+            cmd = params.get("cmd")
+            if not cmd:
+                raise HTTPException(status_code=400, detail="shell action missing 'cmd'")
+
+            run_id = str(uuid4())
+            run_dir = (Path.home() / ".local" / "share" / "lucy-agent" / "runs" / run_id)
+            run_dir.mkdir(parents=True, exist_ok=True)
+            stdout_p = run_dir / "stdout.log"
+            stderr_p = run_dir / "stderr.log"
+
+            r = Run(
+                id=run_id,
+                action_id=a.id,
+                status="RUNNING",
+                started_at=now_iso(),
+                ended_at=None,
+                exit_code=None,
+                stdout_path=str(stdout_p),
+                stderr_path=str(stderr_p),
+            )
+            s.add(r)
+            safe_commit(s)
+
+            write_audit(
+                s,
+                task_id=task_id,
+                event="action_start",
+                data={"action_id": a.id, "type": a.type, "cmd": cmd},
+                run_id=run_id,
+                action_id=a.id,
+                message="action started",
+            )
+
+            try:
+                import subprocess, os
+                with open(stdout_p, "wb") as out, open(stderr_p, "wb") as err:
+                    proc = subprocess.run(
+                        cmd,
+                        shell=True,
+                        stdout=out,
+                        stderr=err,
+                        cwd=os.path.expanduser("~"),
+                    )
+                exit_code = int(proc.returncode)
+                r.exit_code = exit_code
+                r.status = "SUCCEEDED" if exit_code == 0 else "FAILED"
+                r.ended_at = now_iso()
+                safe_commit(s)
+
+                write_audit(
+                    s,
+                    task_id=task_id,
+                    event="action_end",
+                    data={"action_id": a.id, "exit_code": exit_code},
+                    run_id=run_id,
+                    action_id=a.id,
+                    message="action ended",
+                )
+            except Exception as e:
+                r.status = "FAILED"
+                r.ended_at = now_iso()
+                r.exit_code = -1
+                safe_commit(s)
+
+                write_audit(
+                    s,
+                    task_id=task_id,
+                    event="action_error",
+                    data={"action_id": a.id, "error": repr(e)},
+                    run_id=run_id,
+                    action_id=a.id,
+                    message=f"action error: {e!r}",
+                )
+
+            runs_out.append(
+                RunOut(
+                    id=r.id,
+                    task_id=task_id,
+                    action_id=r.action_id,
+                    status=str(r.status),
+                    started_at=r.started_at,
+                    ended_at=r.ended_at,
+                    stdout_path=r.stdout_path,
+                    stderr_path=r.stderr_path,
+                    exit_code=r.exit_code,
+                )
+            )
+
+    return runs_out
+
+@router.get("/{task_id}/audit", response_model=List[AuditOut])
+def get_audit(task_id: str):
+    items: List[AuditOut] = []
+    with get_session() as s:
+        rows = list(s.execute(select(AuditLog).where(AuditLog.task_id == task_id)).scalars())
+        rows.sort(key=lambda r: r.created_at or "")
+        for r in rows:
+            try:
+                data = json.loads(r.data_json or "{}")
+            except Exception:
+                data = {}
+            items.append(
+                AuditOut(
+                    id=r.id,
+                    task_id=task_id,
+                    event=r.event_type,
+                    data=data,
+                    created_at=r.created_at,
+                )
+            )
+    return items
+
+@router.post("/{task_id}/run", response_model=List[RunOut])
+def run_task(task_id: str):
+    """מריץ את כל פעולות ה-shell של הטסק ומחזיר List[RunOut]."""
+    from sqlalchemy import select
+    runs_out: List[RunOut] = []
+
+    with get_session() as s:
+        task = s.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        acts = list(s.execute(select(Action).where(Action.task_id == task_id)).scalars())
+        # אם אין שדה idx – נריץ לפי סדר הכנסתן
+        try:
+            acts.sort(key=lambda a: (a.idx if a.idx is not None else 10**9))
+        except Exception:
+            pass
+
+        for a in acts:
+            if a.type != "shell":
+                raise HTTPException(status_code=400, detail=f"Unsupported action type: {a.type}")
+
+            params = json.loads(a.params_json or "{}")
+            cmd = params.get("cmd")
+            if not cmd:
+                raise HTTPException(status_code=400, detail="shell action missing 'cmd'")
+
+            run_id = str(uuid4())
+            run_dir = Path.home() / ".local" / "share" / "lucy-agent" / "runs" / run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+            stdout_p = run_dir / "stdout.log"
+            stderr_p = run_dir / "stderr.log"
+
+            r = Run(
+                id=run_id,
+                action_id=a.id,
+                status="RUNNING",
+                started_at=now_iso(),
+                ended_at=None,
+                exit_code=None,
+                stdout_path=str(stdout_p),
+                stderr_path=str(stderr_p),
+            )
+            s.add(r)
+            safe_commit(s)
+
+            write_audit(
+                s, task_id=task_id, event="action_start",
+                data={"action_id": a.id, "type": a.type, "cmd": cmd},
+                action_id=a.id, run_id=run_id, message="action started",
+            )
+
+            try:
+                with open(stdout_p, "wb") as out, open(stderr_p, "wb") as err:
+                    proc = subprocess.run(
+                        cmd, shell=True, stdout=out, stderr=err, cwd=os.path.expanduser("~"),
+                    )
+                r.exit_code = int(proc.returncode)
+                r.status = "SUCCEEDED" if exit_code == 0 else "FAILED"
+                r.ended_at = now_iso()
+                safe_commit(s)
+
+                write_audit(
+                    s, task_id=task_id, event="action_end",
+                    data={"action_id": a.id, "exit_code": r.exit_code},
+                    action_id=a.id, run_id=run_id, message="action ended",
+                )
+            except Exception as e:
+                r.status = "FAILED"
+                r.exit_code = -1
+                r.ended_at = now_iso()
+                safe_commit(s)
+                write_audit(
+                    s, task_id=task_id, event="action_error",
+                    data={"action_id": a.id, "error": repr(e)},
+                    action_id=a.id, run_id=run_id, message=f"action error: {e!r}",
+                )
+
+            runs_out.append(RunOut(
+                id=r.id, task_id=task_id, action_id=r.action_id,
+                status=str(r.status), started_at=r.started_at, ended_at=r.ended_at,
+                stdout_path=r.stdout_path, stderr_path=r.stderr_path, exit_code=r.exit_code
+            ))
+
+    # החזרה מפורשת כ-JSON כדי למנוע גוף ריק/204
+    return JSONResponse(content=jsonable_encoder([ro.dict() for ro in runs_out]))
+
+@router.get("/{task_id}/audit", response_model=List[AuditOut])
+def get_audit(task_id: str):
+    from sqlalchemy import select
+    items: List[AuditOut] = []
+    with get_session() as s:
+        rows = list(s.execute(select(AuditLog).where(AuditLog.task_id == task_id)).scalars())
+        rows.sort(key=lambda r: r.created_at or "")
+        for r in rows:
+            try:
+                data = json.loads(r.data_json or "{}")
+            except Exception:
+                data = {}
+            items.append(AuditOut(
+                id=r.id, task_id=task_id, event=r.event_type, data=data, created_at=r.created_at
+            ))
+    return JSONResponse(content=jsonable_encoder([x.dict() for x in items]))
+
+@router.post("/{task_id}/run", response_model=List[RunOut])
+def run_task(task_id: str):
+    """מריץ פעולות shell ומחזיר תמיד JSON (גם אם אין פעולות)."""
+    from sqlalchemy import select
+    runs_out: List[RunOut] = []
+
+    with get_session() as s:
+        task = s.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        acts = list(s.execute(select(Action).where(Action.task_id == task_id)).scalars())
+
+        # אם אין פעולות — החזר ריק, אבל כ-JSON
+        if not acts:
+            return JSONResponse(content=jsonable_encoder([]))
+
+        from pathlib import Path as _P
+        import os as _os, subprocess as _sp, json as _json
+        from uuid import uuid4 as _uuid4
+
+        runs_dir_base = _P.home() / ".local" / "share" / "lucy-agent" / "runs"
+        runs_dir_base.mkdir(parents=True, exist_ok=True)
+
+        for a in acts:
+            if a.type != "shell":
+                raise HTTPException(status_code=400, detail=f"Unsupported action type: {a.type}")
+            params = _json.loads(a.params_json or "{}")
+            cmd = params.get("cmd")
+            if not cmd:
+                raise HTTPException(status_code=400, detail="shell action missing 'cmd'")
+
+            run_id = str(_uuid4())
+            run_dir = runs_dir_base / run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+            stdout_p = run_dir / "stdout.log"
+            stderr_p = run_dir / "stderr.log"
+
+            r = Run(
+                id=run_id, action_id=a.id, status="RUNNING",
+                started_at=now_iso(), ended_at=None, exit_code=None,
+                stdout_path=str(stdout_p), stderr_path=str(stderr_p),
+            )
+            s.add(r); safe_commit(s)
+
+            write_audit(s, task_id=task_id, event="action_start",
+                        data={"action_id": a.id, "cmd": cmd}, action_id=a.id, run_id=run_id)
+
+            try:
+                with open(stdout_p, "wb") as out, open(stderr_p, "wb") as err:
+                    proc = _sp.run(cmd, shell=True, stdout=out, stderr=err, cwd=_os.path.expanduser("~"))
+                r.exit_code = int(proc.returncode)
+                r.status = "SUCCEEDED" if exit_code == 0 else "FAILED"
+            except Exception as e:
+                r.exit_code = -1
+                r.status = "FAILED"
+                write_audit(s, task_id=task_id, event="action_error",
+                            data={"action_id": a.id, "error": repr(e)}, action_id=a.id, run_id=run_id)
+            finally:
+                r.ended_at = now_iso()
+                safe_commit(s)
+
+            write_audit(s, task_id=task_id, event="action_end",
+                        data={"action_id": a.id, "exit_code": r.exit_code}, action_id=a.id, run_id=run_id)
+
+            runs_out.append(RunOut(
+                id=r.id, task_id=task_id, action_id=r.action_id, status=str(r.status),
+                started_at=r.started_at, ended_at=r.ended_at,
+                stdout_path=r.stdout_path, stderr_path=r.stderr_path, exit_code=r.exit_code
+            ))
+
+    return JSONResponse(content=jsonable_encoder([ro.dict() for ro in runs_out]))
+
+# --- status helpers (inserted once) ---
+
+# --- status helpers (inserted once) ---
+# __STATUS_HELPERS_INSERTED__
+try:
+    from types import SimpleNamespace as _SimpleNS
+except Exception:  # fallback מאוד הגנתי
+    class _SimpleNS(dict):
+        __getattr__ = dict.get
+
+STATUS = _SimpleNS(RUNNING="RUNNING", SUCCEEDED="SUCCEEDED", FAILED="FAILED")
+TASK_STATUS = _SimpleNS(
+    PENDING="PENDING",
+    WAITING_APPROVAL="WAITING_APPROVAL",
+    APPROVED="APPROVED",
+    REJECTED="REJECTED",
+    RUNNING="RUNNING",
+    SUCCEEDED="SUCCEEDED",
+    FAILED="FAILED",
+    CANCELED="CANCELED",
+)
+
+def status_from_exit_code(code: int) -> str:
+    try:
+        return STATUS.SUCCEEDED if int(code) == 0 else STATUS.FAILED
+    except Exception:
+        return STATUS.FAILED
+
+def safe_commit(s):
+    # ייבוא מקומי כדי לא לשבור סדר imports בראש הקובץ
+    from sqlalchemy.exc import IntegrityError
+    try:
+        s.commit()
+    except IntegrityError:
+        s.rollback()
+        raise
+# --- end status helpers ---

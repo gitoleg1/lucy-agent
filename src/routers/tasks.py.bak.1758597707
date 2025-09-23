@@ -1,0 +1,266 @@
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+from typing import List, Optional, Literal, Dict, Any
+from uuid import uuid4
+import json
+
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+
+from ..db.session import get_session
+from ..models.tasks import (
+    Task, Action, Run, Approval, AuditLog,
+    TaskStatus, RunStatus, ActionType, now_iso
+)
+from ..services.runner import run_shell_command
+
+router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+# ---------- Schemas ----------
+class ActionIn(BaseModel):
+    type: Literal["shell","http","ssh","gads","waha","browser","file_ops"] = "shell"
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    require_approval: bool = False
+    actions: List[ActionIn] = Field(default_factory=list)
+
+class ApprovalOut(BaseModel):
+    id: str
+    task_id: str
+    token: str
+    decision: Optional[Literal["APPROVE","REJECT"]] = None
+    decided_by: Optional[str] = None
+    decided_at: Optional[str] = None
+    created_at: str
+    expires_at: Optional[str] = None
+
+class TaskOut(BaseModel):
+    id: str
+    title: str
+    description: Optional[str]
+    status: str
+    require_approval: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    approvals: List[ApprovalOut] = []
+
+class ApproveIn(BaseModel):
+    token: str
+    decision: Literal["APPROVE","REJECT"]
+    decided_by: Optional[str] = "telegram:user"
+
+class RunOut(BaseModel):
+    id: str
+    action_id: str
+    status: str
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    exit_code: Optional[int]
+    stdout_path: Optional[str]
+    stderr_path: Optional[str]
+
+class AuditOut(BaseModel):
+    id: str
+    task_id: str
+    event: str
+    data: Dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+# ---------- Helpers ----------
+def _task_to_out(task: Task) -> TaskOut:
+    return TaskOut(
+        id=task.id, title=task.title, description=task.description,
+        status=task.status, require_approval=task.require_approval,
+        created_at=task.created_at, updated_at=task.updated_at,
+        started_at=task.started_at, ended_at=task.ended_at,
+        approvals=[
+            ApprovalOut(
+                id=a.id, task_id=a.task_id, token=a.token,
+                decision=a.decision, decided_by=a.decided_by,
+                decided_at=a.decided_at, created_at=a.created_at, expires_at=a.expires_at
+            ) for a in (task.approvals or [])
+        ],
+    )
+
+def _write_audit(session, *, task_id: str, event: str, data: Dict[str, Any] | None = None,
+                 action_id: str | None = None, run_id: str | None = None, message: str | None = None):
+    rec = AuditLog(
+        id=str(uuid4()),
+        task_id=task_id,
+        action_id=action_id,
+        run_id=run_id,
+        event_type=event,                 # שם העמודה העקבי ב־DB
+        message=message,
+        data_json=json.dumps(data or {}),
+        created_at=now_iso(),
+    )
+    session.add(rec)
+
+# ---------- Routes ----------
+@router.post("", response_model=TaskOut, summary="Create Task")
+def create_task(payload: TaskCreate):
+    try:
+        with get_session() as s:
+            task = Task(
+                id=str(uuid4()),
+                title=payload.title,
+                description=payload.description,
+                status=TaskStatus.WAITING_APPROVAL,
+                require_approval=1 if payload.require_approval else 0,
+                created_at=now_iso(),
+                updated_at=now_iso(),
+            )
+            s.add(task)
+
+            # create one Approval row if required_approval
+            if payload.require_approval:
+                ap = Approval(
+                    id=str(uuid4()),
+                    task_id=task.id,
+                    token=str(uuid4()),
+                    decision=None,
+                    decided_by=None,
+                    decided_at=None,
+                    created_at=now_iso(),
+                    expires_at=None,
+                )
+                s.add(ap)
+
+            # actions
+            for idx, a in enumerate(payload.actions or []):
+                s.add(Action(
+                    id=str(uuid4()),
+                    task_id=task.id,
+                    idx=idx,
+                    type=a.type,
+                    params_json=json.dumps(a.params or {}),
+                    created_at=now_iso(),
+                    updated_at=now_iso(),
+                ))
+
+            _write_audit(s, task_id=task.id, event="task_created",
+                         data={"title": task.title, "require_approval": bool(task.require_approval),
+                               "actions_count": len(payload.actions or [])})
+            s.commit()
+            s.refresh(task)
+            return _task_to_out(task)
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
+
+@router.get("/{task_id}", response_model=TaskOut, summary="Get Task")
+def get_task(task_id: str):
+    with get_session() as s:
+        task = s.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Not Found")
+        return _task_to_out(task)
+
+@router.post("/{task_id}/approve", response_model=TaskOut, summary="Decide Approval")
+def decide_approval(task_id: str, body: ApproveIn):
+    with get_session() as s:
+        task = s.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Not Found")
+        ap = s.execute(select(Approval).where(Approval.task_id == task_id)).scalars().first()
+        if not ap:
+            raise HTTPException(status_code=400, detail="No approval pending")
+        if body.token != ap.token:
+            raise HTTPException(status_code=403, detail="Bad token")
+        ap.decision = body.decision
+        ap.decided_by = body.decided_by
+        ap.decided_at = now_iso()
+        task.status = TaskStatus.APPROVED if body.decision == "APPROVE" else TaskStatus.REJECTED
+        task.updated_at = now_iso()
+        _write_audit(s, task_id=task_id, event=f"approval_{body.decision.lower()}",
+                     data={"decided_by": body.decided_by})
+        s.commit()
+        s.refresh(task)
+        return _task_to_out(task)
+
+@router.post("/{task_id}/run", response_model=List[RunOut], summary="Run Task")
+def run_task(task_id: str) -> List[RunOut]:
+    with get_session() as s:
+        task = s.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Not Found")
+        if task.require_approval and task.status != TaskStatus.APPROVED:
+            raise HTTPException(status_code=409, detail="Task not approved")
+
+        runs_out: List[RunOut] = []
+        actions = s.execute(select(Action).where(Action.task_id == task_id).order_by(Action.idx.asc())).scalars().all()
+        if not actions:
+            _write_audit(s, task_id=task_id, event="no_actions")
+            s.commit()
+            return []
+
+        for act in actions:
+            params = json.loads(act.params_json or "{}")
+            run = Run(
+                id=str(uuid4()),
+                action_id=act.id,
+                status=RunStatus.RUNNING,
+                started_at=now_iso(),
+                ended_at=None,
+                exit_code=None,
+                stdout_path=None,
+                stderr_path=None,
+            )
+            s.add(run); s.commit()  # לקבל ID ב־DB
+
+            if act.type == ActionType.SHELL or act.type == "shell":
+                exit_code, stdout_path, stderr_path = run_shell_command(params.get("cmd"))
+            else:
+                exit_code, stdout_path, stderr_path = (1, None, None)
+
+            run.status = RunStatus.SUCCEEDED if exit_code == 0 else RunStatus.FAILED
+            run.ended_at = now_iso()
+            run.exit_code = exit_code
+            run.stdout_path = stdout_path
+            run.stderr_path = stderr_path
+            s.add(run)
+            _write_audit(s, task_id=task_id, action_id=act.id, run_id=run.id,
+                         event="action_run", data={"type": act.type, "exit_code": exit_code})
+            s.commit()
+
+            runs_out.append(RunOut(
+                id=run.id, action_id=run.action_id, status=run.status,
+                started_at=run.started_at, ended_at=run.ended_at,
+                exit_code=run.exit_code, stdout_path=run.stdout_path, stderr_path=run.stderr_path
+            ))
+        return runs_out
+
+@router.get("/{task_id}/audit", response_model=List[AuditOut], summary="Task Audit Trail")
+def get_audit(task_id: str):
+    with get_session() as s:
+        rows = (
+            s.execute(
+                select(AuditLog)
+                .where(AuditLog.task_id == task_id)
+                .order_by(AuditLog.created_at.asc())
+            )
+            .scalars()
+            .all()
+        )
+
+    out: List[AuditOut] = []
+    for r in rows:
+        event = (
+            getattr(r, "event_type", None)
+            or getattr(r, "event", None)
+            or getattr(r, "type", None)
+            or "event"
+        )
+        raw = getattr(r, "data_json", None) or getattr(r, "data", None)
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except Exception:
+            data = {}
+        out.append(AuditOut(
+            id=r.id, task_id=r.task_id, event=event, data=data, created_at=r.created_at
+        ))
+    return out

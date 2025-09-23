@@ -1,0 +1,398 @@
+RUNS_BASE = Path.home() / ".local" / "share" / "lucy-agent" / "runs"
+RUNS_BASE.mkdir(parents=True, exist_ok=True)
+import os
+import subprocess
+from pathlib import Path
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+from typing import List, Optional, Literal, Dict, Any
+from uuid import uuid4
+import json
+
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+
+from ..db.session import get_session
+from ..models.tasks import (, Task, Action, Run, RunStatus, AuditLog, now_iso
+    Task, Action, Run, Approval, AuditLog,
+    TaskStatus, RunStatus, ActionType, now_iso
+)
+from ..services.runner import run_shell_command
+from ..services.audit import write_audit
+
+router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+# ---------- Schemas ----------
+class ActionIn(BaseModel):
+    type: Literal["shell","http","ssh","gads","waha","browser","file_ops"] = "shell"
+    params: Dict[str, Any] = Field(default_factory=dict)
+
+class TaskCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    require_approval: bool = False
+    actions: List[ActionIn] = Field(default_factory=list)
+
+class ApprovalOut(BaseModel):
+    id: str
+    task_id: str
+    token: str
+    decision: Optional[Literal["APPROVE","REJECT"]] = None
+    decided_by: Optional[str] = None
+    decided_at: Optional[str] = None
+    created_at: str
+    expires_at: Optional[str] = None
+
+class RunOut(BaseModel):
+    id: str
+    action_id: str
+    status: str
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    exit_code: Optional[int]
+    stdout_path: Optional[str]
+    stderr_path: Optional[str]
+
+class TaskOut(BaseModel):
+    id: str
+    title: str
+    description: Optional[str]
+    status: str
+    require_approval: int
+    created_at: str
+    updated_at: str
+    started_at: Optional[str]
+    ended_at: Optional[str]
+    approvals: List[ApprovalOut] = Field(default_factory=list)
+
+class ApproveIn(BaseModel):
+    token: str
+    decision: Literal["APPROVE","REJECT"]
+    decided_by: Optional[str] = "telegram:user"
+
+class AuditOut(BaseModel):
+    id: str
+    task_id: str
+    event: str
+    data: dict = Field(default_factory=dict)
+    created_at: str
+
+# ---------- Helpers ----------
+def _serialize_task_with_approvals(task: Task, session) -> TaskOut:
+    appr_rows = session.execute(
+        select(Approval).where(Approval.task_id == task.id)
+    ).scalars().all()
+    return TaskOut(
+        id=task.id,
+        title=task.title,
+        description=task.description,
+        status=task.status,
+        require_approval=1 if task.require_approval else 0,
+        created_at=task.created_at,
+        updated_at=task.updated_at,
+        started_at=task.started_at,
+        ended_at=task.ended_at,
+        approvals=[
+            ApprovalOut(
+                id=a.id,
+                task_id=a.task_id,
+                token=a.token,
+                decision=a.decision,
+                decided_by=a.decided_by,
+                decided_at=a.decided_at,
+                created_at=a.created_at,
+                expires_at=getattr(a, "expires_at", None),
+            )
+            for a in appr_rows
+        ],
+    )
+
+# ---------- Routes ----------
+@router.post("/tasks", response_model=TaskOut)
+def create_task(payload: TaskCreate):
+    try:
+        with get_session() as s:
+            task = Task(
+                id=str(uuid4()),
+                title=payload.title,
+                description=payload.description,
+                status=TaskStatus.WAITING_APPROVAL,
+                require_approval=1 if payload.require_approval else 0,
+                created_at=now_iso(),
+                updated_at=now_iso(),
+                started_at=None,
+                ended_at=None,
+            )
+            s.add(task)
+
+            # actions
+            for idx, a in enumerate(payload.actions):
+                act = Action(
+                    id=str(uuid4()),
+                    task_id=task.id,
+                    idx=idx,
+                    type=a.type,
+                    params_json=json.dumps(a.params or {}),  # חשוב: JSON string
+                    created_at=now_iso(),
+                    updated_at=now_iso(),
+                )
+                s.add(act)
+
+            # approval (single token for now)
+            appr = Approval(
+                id=str(uuid4()),
+                task_id=task.id,
+                token=str(uuid4()),
+                decision=None,
+                decided_by=None,
+                decided_at=None,
+                created_at=now_iso(),
+            )
+            s.add(appr)
+
+            # audit
+            write_audit(
+                s, task_id=task.id, event="task_created",
+                data={"title": task.title, "require_approval": bool(task.require_approval), "actions_count": len(payload.actions)},
+                message=f"task created ({task.title})",
+            )
+
+            s.commit()
+            s.refresh(task)
+            out = _serialize_task_with_approvals(task, s)
+            return out
+    except SQLAlchemyError as e:
+        return HTTPException(status_code=500, detail=f"DB error: {e}")
+
+@router.get("/tasks/{task_id}", response_model=TaskOut)
+def get_task(task_id: str):
+    with get_session() as s:
+        task = s.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Not Found")
+        return _serialize_task_with_approvals(task, s)
+
+@router.post("/tasks/{task_id}/approve", response_model=TaskOut)
+def decide_approval(task_id: str, body: ApproveIn):
+    with get_session() as s:
+        task = s.get(Task, task_id)
+        if not task:
+            raise HTTPException(status_code=404, detail="Not Found")
+
+        appr = s.execute(
+            select(Approval).where(Approval.task_id == task_id)
+        ).scalars().first()
+        if not appr or appr.token != body.token:
+            raise HTTPException(status_code=400, detail="Invalid token")
+
+        appr.decision = body.decision
+        appr.decided_by = body.decided_by
+        appr.decided_at = now_iso()
+        s.add(appr)
+
+        if body.decision == "APPROVE":
+            task.status = TaskStatus.APPROVED
+        else:
+            task.status = TaskStatus.REJECTED
+        task.updated_at = now_iso()
+        s.add(task)
+
+        write_audit(
+            s, task_id=task.id, event="approval_decided",
+            data={"decision": body.decision, "by": body.decided_by},
+            message=f"approval {body.decision.lower()}",
+        )
+
+        s.commit()
+        s.refresh(task)
+        return _serialize_task_with_approvals(task, s)
+
+@router.post("/tasks/{task_id}/run", response_model=List[RunOut])
+def run_task(task_id: str):
+    """
+    מפעיל Actions מסוג shell, שומר stdout/stderr, מחזיר List[RunOut].
+    """
+    try:
+        runs_out: List[RunOut] = []
+        with get_session() as s:
+            task = s.get(Task, task_id)
+            if not task:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=404, detail="Task not found")
+            if getattr(task, "require_approval", 0) and getattr(task, "status", "") != "APPROVED":
+                from fastapi import HTTPException
+                raise HTTPException(status_code=409, detail="Task requires approval")
+
+            actions = s.execute(
+                select(Action).where(Action.task_id == task_id).order_by(Action.idx.asc())
+            ).scalars().all()
+
+            if not actions:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail="No actions to run")
+
+            write_audit(s, task_id, event="run_started", data={"actions": len(actions)})
+
+            for act in actions:
+                if getattr(act, "type", "shell") != "shell":
+                    write_audit(s, task_id, event="action_skipped",
+                                data={"action_id": act.id, "type": getattr(act, "type", None), "reason": "unsupported"})
+                    continue
+
+                run_id = str(uuid4())
+                run_dir = RUNS_BASE / run_id
+                run_dir.mkdir(parents=True, exist_ok=True)
+                stdout_path = run_dir / "stdout.log"
+                stderr_path = run_dir / "stderr.log"
+
+                status_started = getattr(RunStatus, "STARTED", type("S", (), {"value":"STARTED"})).value
+                status_succeeded = getattr(RunStatus, "SUCCEEDED", type("S", (), {"value":"SUCCEEDED"})).value
+                status_failed = getattr(RunStatus, "FAILED", type("S", (), {"value":"FAILED"})).value
+
+                run_rec = Run(
+                    id=run_id,
+                    action_id=act.id,
+                    status=status_started,
+                    started_at=now_iso(),
+                    ended_at=None,
+                    exit_code=None,
+                    stdout_path=str(stdout_path),
+                    stderr_path=str(stderr_path),
+                )
+                s.add(run_rec)
+                s.flush()
+
+                cmd = (getattr(act, "params", {}) or {}).get("cmd")
+                if not cmd or not isinstance(cmd, str):
+                    run_rec.status = status_failed
+                    run_rec.ended_at = now_iso()
+                    run_rec.exit_code = 127
+                    s.flush()
+                    write_audit(s, task_id, event="action_failed",
+                                data={"action_id": act.id, "reason": "missing cmd"})
+                else:
+                    try:
+                        with open(stdout_path, "wb") as so, open(stderr_path, "wb") as se:
+                            proc = subprocess.run(cmd, shell=True, check=False, stdout=so, stderr=se, env=os.environ.copy())
+                        exit_code = int(proc.returncode)
+                        run_rec.status = status_succeeded if exit_code == 0 else status_failed
+                        run_rec.exit_code = exit_code
+                        run_rec.ended_at = now_iso()
+                        s.flush()
+                        write_audit(s, task_id, event="action_finished",
+                                    data={"action_id": act.id, "exit_code": exit_code,
+                                          "stdout_path": str(stdout_path), "stderr_path": str(stderr_path)})
+                    except Exception as e:
+                        run_rec.status = status_failed
+                        run_rec.exit_code = -1
+                        run_rec.ended_at = now_iso()
+                        s.flush()
+                        write_audit(s, task_id, event="action_exception",
+                                    data={"action_id": act.id, "error": str(e)})
+
+                runs_out.append(RunOut(
+                    id=run_rec.id,
+                    action_id=run_rec.action_id,
+                    status=run_rec.status,
+                    started_at=run_rec.started_at,
+                    ended_at=run_rec.ended_at,
+                    exit_code=run_rec.exit_code,
+                    stdout_path=run_rec.stdout_path,
+                    stderr_path=run_rec.stderr_path,
+                ))
+
+            write_audit(s, task_id, event="run_ended", data={"runs": len(runs_out)})
+        return runs_out
+
+    except SQLAlchemyError as se:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail=f"DB error: {se.__class__.__name__}")
+    except Exception:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="Run failed")
+
+def get_audit(task_id: str):  # placeholder to anchor regex; replaced below
+    pass
+
+task_id: str):
+    """
+    מחזיר את היסטוריית האודיט; תומך בשם עמודה event_type / event / type
+    וגם data_json או data.
+    """
+    with get_session() as s:
+        rows = (
+            s.execute(
+                select(AuditLog)
+                .where(AuditLog.task_id == task_id)
+                .order_by(AuditLog.created_at.asc())
+            )
+            .scalars()
+            .all()
+        )
+
+    out: List[AuditOut] = []
+    for r in rows:
+        event = (
+            getattr(r, "event_type", None)
+            or getattr(r, "event", None)
+            or getattr(r, "type", None)
+            or "event"
+        )
+        raw = getattr(r, "data_json", None) or getattr(r, "data", None)
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else (raw or {})
+            if not isinstance(data, dict):
+                data = {}
+        except Exception:
+            data = {}
+
+        out.append(
+            AuditOut(
+                id=r.id,
+                task_id=r.task_id,
+                event=event,
+                data=data,
+                created_at=r.created_at,
+            )
+        )
+    return out
+
+
+@router.get("/tasks/{task_id}/audit", response_model=List[AuditOut])
+def get_audit(task_id: str):
+    """
+    מחזיר רשומות audit; עובד גם אם שמות העמודות שונות בין גרסאות (event_type/data_json).
+    """
+    with get_session() as s:
+        rows = (
+            s.execute(
+                select(AuditLog)
+                .where(AuditLog.task_id == task_id)
+                .order_by(AuditLog.created_at.asc())
+            )
+            .scalars()
+            .all()
+        )
+
+    out: List[AuditOut] = []
+    for r in rows:
+        event = (
+            getattr(r, "event_type", None)
+            or getattr(r, "event", None)
+            or getattr(r, "type", None)
+            or "event"
+        )
+        raw = getattr(r, "data_json", None) or getattr(r, "data", None)
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else (raw or {})
+        except Exception:
+            data = {}
+        out.append(AuditOut(
+            id=r.id,
+            task_id=r.task_id,
+            event=event,
+            data=data,
+            created_at=r.created_at,
+        ))
+    return out
+
