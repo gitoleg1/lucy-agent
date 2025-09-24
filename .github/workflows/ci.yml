@@ -52,7 +52,12 @@ jobs:
           if [ -f requirements.txt ]; then
             python -m pip install -r requirements.txt || true
           fi
+          # בסיסיים ל־API
           python -m pip install uvicorn fastapi
+          # אם יש פרויקט פייתון — התקנה ב־editable כדי לאפשר import יציב
+          if [ -f pyproject.toml ] || [ -f setup.cfg ]; then
+            python -m pip install -e . || true
+          fi
 
       - name: Boot API (background) + wait for /health
         env:
@@ -62,15 +67,22 @@ jobs:
           set -euxo pipefail
           source .venv/bin/activate
 
-          # לסגור פורט תפוס מראש
+          # אם יש src/ נוסיף ל־sys.path (דרך --app-dir) וגם ל־PYTHONPATH
+          APP_DIR_ARGS=()
+          if [ -d src ]; then
+            export PYTHONPATH="src:${PYTHONPATH:-}"
+            APP_DIR_ARGS=(--app-dir src)
+          fi
+
+          # לשחרר פורט אם תפוס
           fuser -k 8000/tcp || true
 
-          # להריץ דרך פייתון של ה־venv (לא לפתוח shell חדש!)
-          python -m uvicorn "${APP_MODULE}" --host 127.0.0.1 --port 8000 \
+          # להריץ דרך האינטרפרטר של ה־venv; לוגים ל־/tmp/api.out
+          python -m uvicorn "${APP_DIR_ARGS[@]}" "${APP_MODULE}" --host 127.0.0.1 --port 8000 \
             > /tmp/api.out 2>&1 & echo $! > /tmp/api.pid
 
-          # המתנה ל־/health עד 60 שניות
-          for i in {1..60}; do
+          # להמתין עד 90 שניות ל־/health
+          for i in {1..90}; do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
               curl -fsS http://127.0.0.1:8000/health
               exit 0
@@ -79,6 +91,9 @@ jobs:
           done
 
           echo "ERROR: API /health did not become ready in time" >&2
+          # הדפסה מיידית של לוג ה־API לעזרה בדיבוג
+          echo "==== tail /tmp/api.out ====" >&2
+          tail -n +1 /tmp/api.out >&2 || true
           exit 1
 
       - name: Run smoke v11 (auto health-only fallback)
