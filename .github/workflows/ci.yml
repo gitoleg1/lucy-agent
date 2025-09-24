@@ -7,24 +7,31 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.12
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install deps (venv + uvicorn/fastapi + jq CLI)
+      # jq נדרש ע"י סקריפט ה-smoke (זה CLI, לא חבילת פייתון)
+      - name: Install system deps (jq)
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Install Python deps
         run: |
           set -euxo pipefail
           python -m venv .venv
           source .venv/bin/activate
+          # requirements עשוי להיות ריק/מינימלי
           pip install -r requirements.txt || true
           pip install uvicorn fastapi
-          sudo apt-get update
-          sudo apt-get install -y jq
 
       - name: Boot API (background) + wait for /health
         env:
@@ -32,24 +39,25 @@ jobs:
         run: |
           set -euxo pipefail
           source .venv/bin/activate
-          nohup uvicorn "${APP_MODULE}" --host 127.0.0.1 --port 8000 >/tmp/api.out 2>&1 &
+          nohup uvicorn "$APP_MODULE" --host 127.0.0.1 --port 8000 > /tmp/api.out 2>&1 &
+          echo $! > /tmp/api.pid
           for i in {1..30}; do
-            curl -fsS http://127.0.0.1:8000/health >/dev/null && break || true
+            if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
+              curl -fsS http://127.0.0.1:8000/health
+              break
+            fi
             sleep 1
           done
-          # אימות בריאות
-          curl -fsS http://127.0.0.1:8000/health
 
-      - name: Run smoke v11 (health-only fallback)
+      - name: Run smoke v11 (auto health-only fallback)
         env:
-          # אם אין סוד, נופל לברירת מחדל כדי שה־smoke ירוץ
-          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
+          # אם אין Secret בריפו – ייפול לברירת מחדל בטוחה
+          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY || 'ChangeMe_SuperSecret_Long' }}
         run: |
           set -euxo pipefail
           mkdir -p artifacts/json artifacts/logs
-          AGENT_API_KEY="${AGENT_API_KEY:-ChangeMe_SuperSecret_Long}" \
           bash scripts/autopilot_smoke_suite_v11.sh
-          # Assertion: חייב להופיע אחד מהבאים בלוג
+          # וידוא תוצאה בלוג
           grep -E "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log
 
       - name: Upload smoke artifacts
@@ -60,5 +68,19 @@ jobs:
           path: |
             artifacts/**
             /tmp/api.out
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
+      - name: Print API tail on failure
+        if: failure()
+        run: |
+          set -euxo pipefail
+          echo "===== /tmp/api.out (tail) ====="
+          tail -n 200 /tmp/api.out || true
+
+      - name: Stop API
+        if: always()
+        run: |
+          set -euxo pipefail
+          if [ -f /tmp/api.pid ]; then
+            kill "$(cat /tmp/api.pid)" || true
+          fi
