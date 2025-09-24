@@ -2,11 +2,16 @@ name: CI
 
 on:
   push:
-  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   ci:
+    name: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -17,21 +22,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      # jq נדרש ע"י סקריפט ה-smoke (זה CLI, לא חבילת פייתון)
-      - name: Install system deps (jq)
-        run: |
-          set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq
-
-      - name: Install Python deps
+      - name: Install deps
         run: |
           set -euxo pipefail
           python -m venv .venv
           source .venv/bin/activate
-          # requirements עשוי להיות ריק/מינימלי
+          # תלויות פרויקט (אל תיכשל אם אין requirements):
           pip install -r requirements.txt || true
-          pip install uvicorn fastapi
+          # כלים שצריך תמיד ב-CI:
+          pip install uvicorn fastapi jq
 
       - name: Boot API (background) + wait for /health
         env:
@@ -39,28 +38,44 @@ jobs:
         run: |
           set -euxo pipefail
           source .venv/bin/activate
-          nohup uvicorn "$APP_MODULE" --host 127.0.0.1 --port 8000 > /tmp/api.out 2>&1 &
-          echo $! > /tmp/api.pid
-          for i in {1..30}; do
+          # מריצים את ה-API לרקע ושומרים לוג ל-/tmp/api.out כדי להעלות כארטיפקט:
+          nohup uvicorn "${APP_MODULE}" --host 127.0.0.1 --port 8000 > /tmp/api.out 2>&1 &
+
+          # ממתינים עד שהבריאות תקינה (עד 45 שניות):
+          for i in {1..45}; do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
-              curl -fsS http://127.0.0.1:8000/health
               break
             fi
             sleep 1
           done
 
-      - name: Run smoke v11 (auto health-only fallback)
+          # אימות אחרון:
+          curl -fsS http://127.0.0.1:8000/health
+
+      - name: Run smoke v11 (health-only fallback)
         env:
-          # אם אין Secret בריפו – ייפול לברירת מחדל בטוחה
-          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY || 'ChangeMe_SuperSecret_Long' }}
+          # לא משתמשים ב-|| בתוך ה-YAML. בריצה עצמה נשים ברירת מחדל אם לא הוגדר סיקרט.
+          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
         run: |
           set -euxo pipefail
-          mkdir -p artifacts/json artifacts/logs
-          bash scripts/autopilot_smoke_suite_v11.sh
-          # וידוא תוצאה בלוג
-          grep -E "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log
+          mkdir -p artifacts/logs artifacts/json
+          # ברירת מחדל אם הסיקרט לא קיים:
+          : "${AGENT_API_KEY:=ChangeMe_SuperSecret_Long}"
 
-      - name: Upload smoke artifacts
+          # מריצים את הסמוק; כותבים לוג ברור לארטיפקטים:
+          bash scripts/autopilot_smoke_suite_v11.sh | tee artifacts/logs/smoke.log
+
+      - name: Debug tails on failure
+        if: failure()
+        run: |
+          echo "::group::/tmp/api.out (last 200)"
+          tail -n 200 /tmp/api.out || true
+          echo "::endgroup::"
+          echo "::group::artifacts/logs/smoke.log (last 200)"
+          tail -n 200 artifacts/logs/smoke.log || true
+          echo "::endgroup::"
+
+      - name: Upload artifacts (smoke logs + API out)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -68,19 +83,4 @@ jobs:
           path: |
             artifacts/**
             /tmp/api.out
-          if-no-files-found: ignore
-
-      - name: Print API tail on failure
-        if: failure()
-        run: |
-          set -euxo pipefail
-          echo "===== /tmp/api.out (tail) ====="
-          tail -n 200 /tmp/api.out || true
-
-      - name: Stop API
-        if: always()
-        run: |
-          set -euxo pipefail
-          if [ -f /tmp/api.pid ]; then
-            kill "$(cat /tmp/api.pid)" || true
-          fi
+          retention-days: 7
