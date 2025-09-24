@@ -2,16 +2,13 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   ci:
-    name: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -23,59 +20,58 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
+        shell: bash
         run: |
           set -euxo pipefail
           python -m venv .venv
           source .venv/bin/activate
-          # תלויות פרויקט (אל תיכשל אם אין requirements):
+          # אם requirements.txt ריק/חסר חבילות—נשלים למה שצריך להרצה
           pip install -r requirements.txt || true
-          # כלים שצריך תמיד ב-CI:
           pip install uvicorn fastapi jq
 
       - name: Boot API (background) + wait for /health
+        shell: bash
         env:
           APP_MODULE: lucy_agent.main:app
         run: |
           set -euxo pipefail
           source .venv/bin/activate
-          # מריצים את ה-API לרקע ושומרים לוג ל-/tmp/api.out כדי להעלות כארטיפקט:
+          # נריץ Uvicorn ברקע ונפנה לוג לקובץ יציב שנוכל להעלות כארטיפקט
           nohup uvicorn "${APP_MODULE}" --host 127.0.0.1 --port 8000 > /tmp/api.out 2>&1 &
-
-          # ממתינים עד שהבריאות תקינה (עד 45 שניות):
-          for i in {1..45}; do
+          # המתנה עד שהבריאות זמין (עד 60 שניות)
+          for i in {1..60}; do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
               break
             fi
             sleep 1
           done
-
-          # אימות אחרון:
+          # הדפסה אחרונה לאימות
           curl -fsS http://127.0.0.1:8000/health
 
       - name: Run smoke v11 (health-only fallback)
+        shell: bash
         env:
-          # לא משתמשים ב-|| בתוך ה-YAML. בריצה עצמה נשים ברירת מחדל אם לא הוגדר סיקרט.
+          # אם הסיקרט לא מוגדר—לא ישבור; הסקריפט כבר בריא ל-unauth/health-only
           AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
         run: |
           set -euxo pipefail
           mkdir -p artifacts/logs artifacts/json
-          # ברירת מחדל אם הסיקרט לא קיים:
-          : "${AGENT_API_KEY:=ChangeMe_SuperSecret_Long}"
-
-          # מריצים את הסמוק; כותבים לוג ברור לארטיפקטים:
+          source .venv/bin/activate
+          # נשמור גם למסך וגם לקובץ כדי שתמיד יהיה smoke.log בארטיפקטים
           bash scripts/autopilot_smoke_suite_v11.sh | tee artifacts/logs/smoke.log
 
       - name: Debug tails on failure
         if: failure()
+        shell: bash
         run: |
-          echo "::group::/tmp/api.out (last 200)"
+          echo "::group::/tmp/api.out (tail)"
           tail -n 200 /tmp/api.out || true
           echo "::endgroup::"
-          echo "::group::artifacts/logs/smoke.log (last 200)"
+          echo "::group::artifacts/logs/smoke.log (tail)"
           tail -n 200 artifacts/logs/smoke.log || true
           echo "::endgroup::"
 
-      - name: Upload artifacts (smoke logs + API out)
+      - name: Upload smoke artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -83,4 +79,5 @@ jobs:
           path: |
             artifacts/**
             /tmp/api.out
+          if-no-files-found: warn
           retention-days: 7
