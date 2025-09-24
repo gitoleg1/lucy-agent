@@ -54,10 +54,49 @@ jobs:
           fi
           # בסיסיים ל־API
           python -m pip install uvicorn fastapi
-          # אם יש פרויקט פייתון — התקנה ב־editable כדי לאפשר import יציב
+          # אם זה פרויקט פייתון — התקנה ב־editable לייבוא יציב
           if [ -f pyproject.toml ] || [ -f setup.cfg ]; then
             python -m pip install -e . || true
           fi
+
+      - name: Discover project layout (for logs)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "PWD=$(pwd)"
+          ls -la
+          if [ -d src ]; then
+            echo "=== src tree (first 200) ==="
+            find src -maxdepth 2 -type f | sort | sed -n '1,200p'
+          fi
+
+      - name: Import sanity (lucy_agent.main)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          source .venv/bin/activate
+          if [ -d src ]; then export PYTHONPATH="src:${PYTHONPATH:-}"; fi
+          # ננסה לייבא ונדפיס נתיב וגרסאות — לא מפיל את ה־build
+          {
+            python - <<'PY'
+import sys, importlib, pkgutil, traceback, os, platform
+print("Python:", sys.version)
+print("Platform:", platform.platform())
+print("sys.path[0..5]:", sys.path[:6])
+try:
+    m = importlib.import_module("lucy_agent.main")
+    import inspect
+    print("Imported:", m.__name__)
+    print("File:", inspect.getsourcefile(m) or inspect.getfile(m))
+    # ודא שקיים app
+    app = getattr(m, "app", None)
+    print("Has app:", bool(app))
+except Exception as e:
+    print("IMPORT_ERROR:", e)
+    traceback.print_exc()
+PY
+          } > artifacts/logs/import_sanity.txt 2>&1 || true
+          sed -n '1,200p' artifacts/logs/import_sanity.txt || true
 
       - name: Boot API (background) + wait for /health
         env:
@@ -67,7 +106,7 @@ jobs:
           set -euxo pipefail
           source .venv/bin/activate
 
-          # אם יש src/ נוסיף ל־sys.path (דרך --app-dir) וגם ל־PYTHONPATH
+          # אם יש src/ נוסיף ל־PYTHONPATH וגם נשתמש ב־--app-dir
           APP_DIR_ARGS=()
           if [ -d src ]; then
             export PYTHONPATH="src:${PYTHONPATH:-}"
@@ -77,9 +116,17 @@ jobs:
           # לשחרר פורט אם תפוס
           fuser -k 8000/tcp || true
 
-          # להריץ דרך האינטרפרטר של ה־venv; לוגים ל־/tmp/api.out
+          # נריץ בפרונט, ננתק לרקע, ונבדוק מיד אם מת
           python -m uvicorn "${APP_DIR_ARGS[@]}" "${APP_MODULE}" --host 127.0.0.1 --port 8000 \
             > /tmp/api.out 2>&1 & echo $! > /tmp/api.pid
+
+          sleep 2
+          if ! ps -p "$(cat /tmp/api.pid)" >/dev/null 2>&1; then
+            echo "API died immediately. Dumping /tmp/api.out:" >&2
+            echo "==== /tmp/api.out ====" >&2
+            cat /tmp/api.out >&2 || true
+            exit 1
+          fi
 
           # להמתין עד 90 שניות ל־/health
           for i in {1..90}; do
@@ -91,7 +138,6 @@ jobs:
           done
 
           echo "ERROR: API /health did not become ready in time" >&2
-          # הדפסה מיידית של לוג ה־API לעזרה בדיבוג
           echo "==== tail /tmp/api.out ====" >&2
           tail -n +1 /tmp/api.out >&2 || true
           exit 1
@@ -104,7 +150,6 @@ jobs:
           set -euxo pipefail
           source .venv/bin/activate
           bash scripts/autopilot_smoke_suite_v11.sh || true
-
           if grep -Eq "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log 2>/dev/null; then
             echo "::notice::Smoke indicates success (either full or health-only)"
           else
@@ -136,7 +181,9 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          echo "==== tail /tmp/api.out ===="
-          tail -n 200 /tmp/api.out 2>/dev/null || echo "no /tmp/api.out"
-          echo "==== smoke.log (first 200 lines) ===="
+          echo "==== /tmp/api.out ===="
+          tail -n 400 /tmp/api.out 2>/dev/null || echo "no /tmp/api.out"
+          echo "==== artifacts/logs/import_sanity.txt ===="
+          sed -n '1,200p' artifacts/logs/import_sanity.txt 2>/dev/null || echo "no import_sanity.txt"
+          echo "==== artifacts/logs/smoke.log ===="
           sed -n '1,200p' artifacts/logs/smoke.log 2>/dev/null || echo "no artifacts/logs/smoke.log"
