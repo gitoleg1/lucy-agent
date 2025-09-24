@@ -4,55 +4,53 @@ on:
   push:
   pull_request:
 
-permissions:
-  contents: read
-
 jobs:
-  smoke:
+  ci:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install deps
+      - name: Install deps (venv + uvicorn/fastapi + jq CLI)
         run: |
+          set -euxo pipefail
           python -m venv .venv
           source .venv/bin/activate
-          python -m pip install --upgrade pip
           pip install -r requirements.txt || true
-          pip install uvicorn fastapi jq
+          pip install uvicorn fastapi
+          sudo apt-get update
+          sudo apt-get install -y jq
 
-      - name: Start API (background) + wait for /health
+      - name: Boot API (background) + wait for /health
         env:
           APP_MODULE: lucy_agent.main:app
-          NEXT_PUBLIC_AGENT_BASE: http://127.0.0.1:8000
-          AGENT_API_KEY: dummy_key_for_ci
         run: |
           set -euxo pipefail
           source .venv/bin/activate
-          nohup uvicorn "${APP_MODULE}" --host 127.0.0.1 --port 8000 > api.out 2>&1 &
-          for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:8000/health >/dev/null && break
+          nohup uvicorn "${APP_MODULE}" --host 127.0.0.1 --port 8000 >/tmp/api.out 2>&1 &
+          for i in {1..30}; do
+            curl -fsS http://127.0.0.1:8000/health >/dev/null && break || true
             sleep 1
           done
+          # אימות בריאות
           curl -fsS http://127.0.0.1:8000/health
 
-      - name: Run smoke v11 (auto health-only if no /tasks)
+      - name: Run smoke v11 (health-only fallback)
         env:
-          AGENT_API_KEY: dummy_key_for_ci
+          # אם אין סוד, נופל לברירת מחדל כדי שה־smoke ירוץ
+          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
         run: |
           set -euxo pipefail
-          bash scripts/autopilot_smoke_suite_v11.sh || true
-          if ! grep -E "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log; then
-            echo "Smoke failed; showing first 200 lines:"
-            sed -n '1,200p' artifacts/logs/smoke.log || true
-            exit 1
-          fi
+          mkdir -p artifacts/json artifacts/logs
+          AGENT_API_KEY="${AGENT_API_KEY:-ChangeMe_SuperSecret_Long}" \
+          bash scripts/autopilot_smoke_suite_v11.sh
+          # Assertion: חייב להופיע אחד מהבאים בלוג
+          grep -E "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log
 
       - name: Upload smoke artifacts
         if: always()
@@ -61,5 +59,5 @@ jobs:
           name: smoke-artifacts
           path: |
             artifacts/**
-            api.out
-          if-no-files-found: ignore
+            /tmp/api.out
+          if-no-files-found: warn
