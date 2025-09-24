@@ -29,16 +29,33 @@ jobs:
           fi
           jq --version
 
-      - name: Install deps
+      - name: Pre-create artifacts dirs (always)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/json artifacts/logs
+          # נכין גם את /tmp כדי שנוכל להעלות api.out גם אם אין API
+          : > /tmp/api.out || true
+
+      - name: Install deps (robust)
         shell: bash
         run: |
           set -euxo pipefail
+          python -V
+          which python
           python -m venv .venv
           source .venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt || true
-          # ליתר ביטחון (אם requirements.txt לא כולל אותם)
-          pip install uvicorn fastapi
+          hash -r
+          python -V
+          which python
+          python -m pip install --upgrade pip
+          # אם requirements.txt קיים – נתקין; אחרת נדלג
+          if [ -f requirements.txt ]; then
+            python -m pip install -r requirements.txt || true
+          fi
+          # ליתר ביטחון
+          python -m pip install uvicorn fastapi
 
       - name: Boot API (background) + wait for /health
         env:
@@ -48,14 +65,14 @@ jobs:
           set -euxo pipefail
           source .venv/bin/activate
 
-          # לניקוי ריצות קודמות (אם יש פורט תפוס)
+          # לנקות פורט תפוס
           fuser -k 8000/tcp || true
 
-          # נריץ את uvicorn ברקע ונפנה STDOUT/STDERR לקובץ אחד שנעלה כארטיפקט
+          # להרים API ברקע ולנתב לוגים לקובץ שנעלה כארטיפקט
           nohup bash -lc 'uvicorn "'"${APP_MODULE}"'" --host 127.0.0.1 --port 8000' \
             > /tmp/api.out 2>&1 & echo $! > /tmp/api.pid
 
-          # המתנה עד ש-/health עולה
+          # להמתין ל-/health
           for i in {1..60}; do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
               curl -fsS http://127.0.0.1:8000/health
@@ -69,18 +86,13 @@ jobs:
 
       - name: Run smoke v11 (auto health-only fallback)
         env:
-          # מפתח מה‐Secrets; אם אין, נשתמש בערך ברירת מחדל כדי שהסמוק ירוץ בכל מקרה
           AGENT_API_KEY: ${{ secrets.AGENT_API_KEY || 'ChangeMe_SuperSecret_Long' }}
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p artifacts/json artifacts/logs
           source .venv/bin/activate
-
-          # הסקריפט שלנו כבר יודע לעשות fallback ל-Health-only אם אין /tasks ב-OpenAPI
           bash scripts/autopilot_smoke_suite_v11.sh || true
 
-          # חיווי קצר ללוג ה-CI (לא תחליף לארטיפקטים)
           if grep -Eq "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log; then
             echo "::notice::Smoke indicates success (either full or health-only)"
           else
@@ -96,7 +108,6 @@ jobs:
             kill "$(cat /tmp/api.pid)" 2>/dev/null || true
             sleep 1
           fi
-          # לוודא שהפורט נסגר
           fuser -k 8000/tcp || true
 
       - name: Upload smoke artifacts (always)
@@ -109,7 +120,6 @@ jobs:
             artifacts/**
             /tmp/api.out
 
-      # הדפסות עזרה בקונסול אם ה-Job נכשל — כדי שיהיה רמז גם בלי להוריד ארטיפקטים
       - name: Debug tails on failure
         if: failure()
         shell: bash
@@ -118,3 +128,4 @@ jobs:
           tail -n 200 /tmp/api.out 2>/dev/null || echo "no /tmp/api.out"
           echo "==== smoke.log (first 200 lines) ===="
           sed -n '1,200p' artifacts/logs/smoke.log 2>/dev/null || echo "no artifacts/logs/smoke.log"
+
