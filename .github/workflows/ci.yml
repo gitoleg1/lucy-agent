@@ -11,76 +11,46 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install OS deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
-
-      - name: Create venv & install
+      - name: Install deps
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          # התקנות מינימליות — אם אין requirements.txt פשוט נתקין ישירות
-          if [[ -f requirements.txt ]]; then
-            pip install -r requirements.txt || true
-          fi
-          pip install fastapi uvicorn pydantic sqlalchemy || true
+          pip install --upgrade pip
+          pip install -r requirements.txt || true
+          pip install uvicorn fastapi jq
 
-      - name: Prepare artifacts dir
-        run: mkdir -p artifacts/logs artifacts/json
-
-      - name: Run smoke v11
+      - name: Start API (background)
         env:
-          # אם לא הוזן סוד מה־Repo/Org, נשתמש בערך דיפולטי כדי לא לחסום
-          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY || 'ChangeMe_SuperSecret_Long' }}
+          APP_MODULE: lucy_agent.main:app
           NEXT_PUBLIC_AGENT_BASE: http://127.0.0.1:8000
+          AGENT_API_KEY: dummy_key_for_ci
         run: |
-          set -Eeuo pipefail
           source .venv/bin/activate
+          nohup uvicorn "${APP_MODULE:-lucy_agent.main:app}" --host 127.0.0.1 --port 8000 > api.out 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:8000/health && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/health
 
-          # הפעלה זמנית של ה־API לטובת ה־smoke, אם הפרויקט לא מריץ בעצמו.
-          # נסה לאתר מודול אפליקציה; אם חסר, ננסה lucy_agent.main:app
-          APP_MODULE="${APP_MODULE:-lucy_agent.main:app}"
-
-          # נפעיל את ה־API ברקע (אם כבר רץ — curl /health יצליח בכל מקרה)
-          uvicorn "$APP_MODULE" --host 127.0.0.1 --port 8000 > artifacts/logs/api.out 2> artifacts/logs/api.err &
-          API_PID=$!
-          sleep 1
-
-          # הרצת smoke (הסקריפט שערכת)
+      - name: Run smoke v11 (auto health-only if no /tasks)
+        env:
+          AGENT_API_KEY: dummy_key_for_ci
+        run: |
           bash scripts/autopilot_smoke_suite_v11.sh || true
+          grep -E "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log
 
-          # בדיקת הצלחה — מקבלים הצלחה באחד משני המצבים:
-          # 1) ה־smoke המלא סיים בהצלחה
-          # 2) Health-only (לא קיימים נתיבי /tasks ב־OpenAPI) — נחשב PASS כדי לא לחסום PR
-          if grep -q "SMOKE v11 — הושלם בהצלחה" artifacts/logs/smoke.log; then
-            echo "PASS: smoke v11 completed."
-            RC=0
-          elif grep -q "Health-only ✅" artifacts/logs/smoke.log; then
-            echo "PASS: health-only mode (no /tasks in OpenAPI)."
-            RC=0
-          else
-            echo "FAIL: smoke did not reach success or health-only."
-            echo "---- smoke.log ----"
-            sed -n '1,200p' artifacts/logs/smoke.log || true
-            RC=1
-          fi
-
-          # ניקוי uvicorn אם הופעל כאן
-          if ps -p "$API_PID" >/dev/null 2>&1; then
-            kill "$API_PID" || true
-          fi
-
-          exit $RC
-
-      - name: Upload artifacts
+      - name: Upload smoke artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-artifacts
-          path: artifacts/
+          path: |
+            artifacts/**
+            api.out
+          if-no-files-found: ignore
