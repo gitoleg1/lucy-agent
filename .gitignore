@@ -13,3 +13,13 @@ artifacts/
 .DS_Store
 .idea/
 .vscode/
+
+# API logs
+.api.log*
+
+# API logs
+.api.log*
+
+# Editors
+*~
+.#*
