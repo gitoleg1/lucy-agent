@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps (jq, curl)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+
+      - name: Create venv & install deps
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          # ליתר ביטחון:
+          pip install uvicorn fastapi
+
+      - name: Prepare artifacts dir
+        run: mkdir -p artifacts
+
+      - name: Run smoke v11
+        env:
+          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
+          NEXT_PUBLIC_AGENT_BASE: "http://127.0.0.1:8000"
+          APP_MODULE: "lucy_agent.main:app"
+        run: |
+          chmod +x scripts/autopilot_smoke_suite_v11.sh
+          bash scripts/autopilot_smoke_suite_v11.sh | tee artifacts/smoke.log
+
+      - name: Upload artifacts (logs + json)
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-artifacts
+          path: |
+            artifacts/
+            artifacts/logs/**
+            artifacts/json/**
+          if-no-files-found: warn

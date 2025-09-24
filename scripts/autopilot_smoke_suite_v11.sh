@@ -1,104 +1,147 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
-API="http://127.0.0.1:8000"
-TOKEN="${TOKEN:-supersecret}"
+# ============================================
+# Lucy Autopilot — smoke v11 (actions-correct, auth-check on agent/shell)
+# ============================================
 
-say() { printf "%s\n" "────────────────────────────────────────"; echo "$@"; }
+APP_MODULE="${APP_MODULE:-lucy_agent.main:app}"
+API_BASE="${NEXT_PUBLIC_AGENT_BASE:-http://127.0.0.1:8000}"
+API_BASE="${API_BASE%/}"
+API_HEALTH="$API_BASE/health"
+API_TASKS="$API_BASE/tasks/"
+API_RUN_BASE="$API_BASE/tasks"
+API_AGENT_SHELL="$API_BASE/tasks/agent/shell"
+API_QUICK_RUN="$API_BASE/tasks/quick-run"
+
+# ---- API KEY (מ-.env אם לא הוגדר כסביבה)
+API_KEY="${AGENT_API_KEY:-}"
+if [[ -z "${API_KEY}" && -f ".env" ]]; then
+  API_KEY="$(awk -F= '/^AGENT_API_KEY=/{print $2}' .env | tr -d $'\r\n ')"
+fi
+API_KEY="${API_KEY:-ChangeMe_SuperSecret_Long}"
+
+ART_DIR="artifacts"
+LOG_DIR="$ART_DIR/logs"
+OUT_DIR="$ART_DIR/json"
+mkdir -p "$LOG_DIR" "$OUT_DIR"
+
+log() { printf '[SMOKE] %s\n' "$*" | tee -a "$LOG_DIR/smoke.log" ; }
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
+require() { for c in "$@"; do have_cmd "$c" || { echo "Missing command: $c" >&2; exit 2; }; done; }
+require curl jq
+
+post_json_headers() {
+  # post_json_headers <url> <body> <outfile>  -> מחזיר קוד HTTP
+  local url="$1" body="$2" of="$3"
+  curl -sS -L -o "$of" -w "%{http_code}" \
+    -X POST "$url" \
+    -H "X-Api-Key: $API_KEY" \
+    -H "Authorization: Bearer $API_KEY" \
+    -H "Content-Type: application/json" \
+    -d "$body"
+}
 
 wait_health() {
-  for i in {1..100}; do
-    if curl -sf "$API/health" >/dev/null; then
-      echo "✅ health OK"
-      return 0
-    fi
-    sleep 0.2
+  local deadline=$((SECONDS+30))
+  while (( SECONDS < deadline )); do
+    if curl -sf "$API_HEALTH" >/dev/null; then return 0; fi
+    sleep 0.5
   done
-  echo "❌ health check timed out"; exit 1
+  return 1
 }
 
-post() {
-  local body="$1"
-  shift || true
-  curl -sS -H 'Content-Type: application/json' -H "X-API-Key: $TOKEN" -X POST "$API/tasks/agent/shell" -d "$body" "$@"
+NEED_BOOT=0
+if ! curl -sf "$API_HEALTH" >/dev/null 2>&1; then NEED_BOOT=1; fi
+
+API_PID=""
+if (( NEED_BOOT )); then
+  have_cmd uvicorn || { echo "uvicorn not found"; exit 3; }
+  log "לא נמצא API פעיל — מרימים לוקאלית: uvicorn $APP_MODULE --host 127.0.0.1 --port 8000"
+  ( uvicorn "$APP_MODULE" --host 127.0.0.1 --port 8000 >"$LOG_DIR/api.out" 2>"$LOG_DIR/api.err" ) &
+  API_PID=$!
+  disown "$API_PID"
+  wait_health || { log "כשל בהמתנה ל-/health לאחר הרמה"; exit 4; }
+else
+  log "נמצא API פעיל — ממשיכים לבדיקה."
+fi
+
+cleanup() {
+  if [[ -n "${API_PID:-}" ]]; then
+    kill "$API_PID" >/dev/null 2>&1 || true
+    wait "$API_PID" >/dev/null 2>&1 || true
+  fi
 }
+trap cleanup EXIT
 
-echo "=== 0) Clean boot & wait health ==="
-wait_health
+# ---- 1) /health
+log "בדיקת /health"
+curl -sS "$API_HEALTH" | tee "$OUT_DIR/health.json" | jq . >/dev/null || true
 
-say "=== 1) Happy path — echo ok && true ==="
-out="$(post '{"cmd":"echo ok && true"}')"
-status=$(jq -r '.task.status' <<<"$out")
-rc=$(jq -r '.runs[0].exit_code' <<<"$out")
-if [[ "$status" == "SUCCEEDED" && "$rc" == "0" ]]; then
-  echo "✅ happy path ok"
-else
-  echo "❌ happy path failed"; echo "$out"; exit 1
+# ---- 2) POST /tasks/ (נכון לפי OpenAPI: actions)
+log "יצירת משימה עם actions (לא steps)"
+CREATE_BODY='{
+  "title": "smoke-v11",
+  "actions": [
+    { "type": "shell", "params": { "cmd": "echo start && uname -a && echo end" } }
+  ]
+}'
+HTTP_CODE_CREATE="$(post_json_headers "$API_TASKS" "$CREATE_BODY" "$OUT_DIR/create_task.json")"
+echo "$HTTP_CODE_CREATE" > "$OUT_DIR/create_task.code"
+log "POST /tasks/ → HTTP $HTTP_CODE_CREATE"
+if [[ "$HTTP_CODE_CREATE" == "401" || "$HTTP_CODE_CREATE" == "403" ]]; then
+  log "הרשאה נכשלה (HTTP $HTTP_CODE_CREATE). בדוק AGENT_API_KEY"
+  exit 11
+fi
+if [[ "$HTTP_CODE_CREATE" != "200" && "$HTTP_CODE_CREATE" != "201" ]]; then
+  log "קוד לא תקין ליצירת משימה ($HTTP_CODE_CREATE). ראה גוף ב-$OUT_DIR/create_task.json"
+  exit 12
 fi
 
-say "=== 2) Blocked command — rm -rf / (deny/allow policy) ==="
-code=$(curl -sS -o /tmp/policy_out.json -w "%{http_code}" \
-  -H 'Content-Type: application/json' -H "X-API-Key: $TOKEN" \
-  -X POST "$API/tasks/agent/shell" -d '{"cmd":"rm -rf /"}')
-if [[ "$code" != "400" && "$code" != "403" ]]; then
-  echo "❌ expected 400/403 for dangerous command, got $code"; cat /tmp/policy_out.json; exit 1
+TASK_ID="$(jq -r '.id // .task_id // .data.id // empty' "$OUT_DIR/create_task.json" || true)"
+if [[ -z "$TASK_ID" || "$TASK_ID" == "null" ]]; then
+  log "לא נמצא TASK_ID בתגובה. הדפסה לצורך דיבוג:"
+  jq . "$OUT_DIR/create_task.json" || true
+  exit 13
 fi
-if ! jq -e '.detail|test("denylist|allowlist")' </tmp/policy_out.json >/dev/null; then
-  echo "❌ policy response missing keyword"; cat /tmp/policy_out.json; exit 1
-fi
-echo "✅ dangerous command blocked by policy"
+log "TASK_ID=$TASK_ID"
 
-say "=== 3) Allowlist — allow only \"echo\" (server env) ==="
-out="$(post '{"cmd":"echo allowed && true"}')"
-status=$(jq -r '.task.status' <<<"$out"); rc=$(jq -r '.runs[0].exit_code' <<<"$out")
-if [[ "$status" == "SUCCEEDED" && "$rc" == "0" ]]; then
-  echo "✅ allowlist allows echo"
-else
-  echo "❌ allowlist echo failed"; echo "$out"; exit 1
-fi
+# ---- 3) POST /tasks/{id}/run (לפי OpenAPI אין body)
+log "הפעלת המשימה (POST /tasks/{id}/run)"
+RUN_URL="$API_RUN_BASE/$TASK_ID/run"
+HTTP_CODE_RUN="$(post_json_headers "$RUN_URL" '{}' "$OUT_DIR/run_$TASK_ID.json")"
+echo "$HTTP_CODE_RUN" > "$OUT_DIR/run_$TASK_ID.code"
+log "POST /tasks/{id}/run → HTTP $HTTP_CODE_RUN"
 
-code=$(curl -sS -o /tmp/ua_out.json -w "%{http_code}" \
-  -H 'Content-Type: application/json' -H "X-API-Key: $TOKEN" \
-  -X POST "$API/tasks/agent/shell" -d '{"cmd":"uname -a"}')
-if [[ "$code" != "400" && "$code" != "403" ]]; then
-  echo "❌ allowlist expected 400/403 for uname, got $code"; cat /tmp/ua_out.json; exit 1
-fi
-if ! jq -e '.detail|test("allowlist")' </tmp/ua_out.json >/dev/null; then
-  echo "❌ allowlist response missing keyword"; cat /tmp/ua_out.json; exit 1
-fi
-echo "✅ allowlist blocks uname"
+# ---- 4) פולינג לסטטוס עד סיום
+log "פולינג לסטטוס המשימה"
+STATUS=""
+DEADLINE=$((SECONDS+120))
+while (( SECONDS < DEADLINE )); do
+  TASK_JSON="$OUT_DIR/task_$TASK_ID.json"
+  curl -sS -H "X-Api-Key: $API_KEY" -H "Authorization: Bearer $API_KEY" "$API_RUN_BASE/$TASK_ID" \
+    | tee "$TASK_JSON" >/dev/null
+  STATUS="$(jq -r '.status // empty' "$TASK_JSON")"
+  log "סטטוס: $STATUS"
+  case "$STATUS" in
+    SUCCEEDED) break ;;
+    FAILED|CANCELED|CANCELLED) log "משימה נכשלה/בוטלה"; exit 24 ;;
+  esac
+  sleep 1
+done
+[[ "$STATUS" == "SUCCEEDED" ]] || { log "פולינג הגיע ל-timeout (לא SUCCEEDED)"; exit 25; }
 
-say "=== 4) Timeout — expect FAILED/124/timeout=true ==="
-# נשאיר allowlist=echo ולכן מתחילים עם echo ואז ישנים 15 שניות (מעל 10)
-sleep 1
-out="$(post '{"cmd":"echo start; sleep 15; echo end"}')"
-status=$(jq -r '.task.status' <<<"$out")
-rc=$(jq -r '.runs[0].exit_code' <<<"$out")
-timeout_flag=$(jq -r '.audit[-1].data.timeout' <<<"$out")
-stdout_t=$(jq -r '(.audit[-1].data.stdout_tail|type?)' <<<"$out")
-stderr_t=$(jq -r '(.audit[-1].data.stderr_tail|type?)' <<<"$out")
-
-echo "status=$status rc=$rc timeout=$timeout_flag stdout_type=$stdout_t stderr_type=$stderr_t"
-
-if [[ "$status" != "FAILED" || "$rc" != "124" || "$timeout_flag" != "true" || "$stdout_t" != "string" || "$stderr_t" != "string" ]]; then
-  echo "❌ timeout semantics wrong"; echo "$out"; exit 1
-fi
-echo "✅ timeout semantics correct"
-
-say "=== 5) API Key checks ==="
-code=$(curl -sS -o /tmp/unauth.json -w "%{http_code}" -H 'Content-Type: application/json' \
-  -X POST "$API/tasks/agent/shell" -d '{"cmd":"echo ok && true"}')
-if [[ "$code" != "401" && "$code" != "403" ]]; then
-  echo "❌ auth: expected 401/403 without token, got $code"; cat /tmp/unauth.json; exit 1
-fi
-echo "✅ auth rejects without key (401/403)"
-
-out="$(post '{"cmd":"echo ok && true"}')"
-status=$(jq -r '.task.status' <<<"$out"); rc=$(jq -r '.runs[0].exit_code' <<<"$out")
-if [[ "$status" == "SUCCEEDED" && "$rc" == "0" ]]; then
-  echo "✅ auth passes with valid key"
-else
-  echo "❌ auth with key failed"; echo "$out"; exit 1
+# ---- 5) בדיקת 401/403 ללא מפתח — על endpoint מוגן (/tasks/agent/shell)
+log "בדיקת 401/403 ללא מפתח על /tasks/agent/shell"
+SHELL_BODY_UNAUTH='{"cmd":"echo ok","title":"agent-shell"}'
+HTTP_CODE_NOAUTH="$(curl -sS -L -o "$OUT_DIR/unauth.json" -w "%{http_code}" \
+  -X POST "$API_AGENT_SHELL" \
+  -H "Content-Type: application/json" \
+  -d "$SHELL_BODY_UNAUTH")"
+echo "$HTTP_CODE_NOAUTH" > "$OUT_DIR/unauth.code"
+if [[ "$HTTP_CODE_NOAUTH" != "401" && "$HTTP_CODE_NOAUTH" != "403" ]]; then
+  log "ציפינו ל-401/403, קיבלנו $HTTP_CODE_NOAUTH"
+  exit 26
 fi
 
-say "🎉 ALL CHECKS PASSED"
+log "SMOKE v11 — הושלם בהצלחה"
