@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
@@ -20,20 +23,21 @@ jobs:
         run: |
           python -m venv .venv
           source .venv/bin/activate
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt || true
           pip install uvicorn fastapi jq
 
-      - name: Start API (background)
+      - name: Start API (background) + wait for /health
         env:
           APP_MODULE: lucy_agent.main:app
           NEXT_PUBLIC_AGENT_BASE: http://127.0.0.1:8000
           AGENT_API_KEY: dummy_key_for_ci
         run: |
+          set -euxo pipefail
           source .venv/bin/activate
-          nohup uvicorn "${APP_MODULE:-lucy_agent.main:app}" --host 127.0.0.1 --port 8000 > api.out 2>&1 &
+          nohup uvicorn "${APP_MODULE}" --host 127.0.0.1 --port 8000 > api.out 2>&1 &
           for i in $(seq 1 30); do
-            curl -fsS http://127.0.0.1:8000/health && break
+            curl -fsS http://127.0.0.1:8000/health >/dev/null && break
             sleep 1
           done
           curl -fsS http://127.0.0.1:8000/health
@@ -42,8 +46,13 @@ jobs:
         env:
           AGENT_API_KEY: dummy_key_for_ci
         run: |
+          set -euxo pipefail
           bash scripts/autopilot_smoke_suite_v11.sh || true
-          grep -E "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log
+          if ! grep -E "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log; then
+            echo "Smoke failed; showing first 200 lines:"
+            sed -n '1,200p' artifacts/logs/smoke.log || true
+            exit 1
+          fi
 
       - name: Upload smoke artifacts
         if: always()
