@@ -4,22 +4,15 @@ __pycache__/
 
 # venv
 .venv/
-
 # Artifacts & logs
 artifacts/
 *.code
-
 # OS/editor
 .DS_Store
 .idea/
 .vscode/
-
 # API logs
 .api.log*
-
-# API logs
-.api.log*
-
 # Editors
 *~
 .#*
