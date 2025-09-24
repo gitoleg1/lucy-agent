@@ -35,7 +35,6 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/json artifacts/logs
-          # נכין גם את /tmp כדי שנוכל להעלות api.out גם אם אין API
           : > /tmp/api.out || true
 
       - name: Install deps (robust)
@@ -50,11 +49,9 @@ jobs:
           python -V
           which python
           python -m pip install --upgrade pip
-          # אם requirements.txt קיים – נתקין; אחרת נדלג
           if [ -f requirements.txt ]; then
             python -m pip install -r requirements.txt || true
           fi
-          # ליתר ביטחון
           python -m pip install uvicorn fastapi
 
       - name: Boot API (background) + wait for /health
@@ -65,14 +62,14 @@ jobs:
           set -euxo pipefail
           source .venv/bin/activate
 
-          # לנקות פורט תפוס
+          # לסגור פורט תפוס מראש
           fuser -k 8000/tcp || true
 
-          # להרים API ברקע ולנתב לוגים לקובץ שנעלה כארטיפקט
-          nohup bash -lc 'uvicorn "'"${APP_MODULE}"'" --host 127.0.0.1 --port 8000' \
+          # להריץ דרך פייתון של ה־venv (לא לפתוח shell חדש!)
+          python -m uvicorn "${APP_MODULE}" --host 127.0.0.1 --port 8000 \
             > /tmp/api.out 2>&1 & echo $! > /tmp/api.pid
 
-          # להמתין ל-/health
+          # המתנה ל־/health עד 60 שניות
           for i in {1..60}; do
             if curl -fsS http://127.0.0.1:8000/health >/dev/null; then
               curl -fsS http://127.0.0.1:8000/health
@@ -93,7 +90,7 @@ jobs:
           source .venv/bin/activate
           bash scripts/autopilot_smoke_suite_v11.sh || true
 
-          if grep -Eq "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log; then
+          if grep -Eq "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifacts/logs/smoke.log 2>/dev/null; then
             echo "::notice::Smoke indicates success (either full or health-only)"
           else
             echo "::warning::No success indicator in smoke.log (check artifacts)"
@@ -128,4 +125,3 @@ jobs:
           tail -n 200 /tmp/api.out 2>/dev/null || echo "no /tmp/api.out"
           echo "==== smoke.log (first 200 lines) ===="
           sed -n '1,200p' artifacts/logs/smoke.log 2>/dev/null || echo "no artifacts/logs/smoke.log"
-
