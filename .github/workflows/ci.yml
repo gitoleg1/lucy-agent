@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   lint:
-    name: Lint (ruff + black --check)
+    name: Lint (ruff check + black --check)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -32,8 +32,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff black
 
-      - name: Ruff
-        run: ruff .
+      - name: Ruff (lint)
+        run: ruff check .
+
       - name: Black (check only)
         run: black --check .
 
