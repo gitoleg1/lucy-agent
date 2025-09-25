@@ -1,9 +1,11 @@
-from fastapi import APIRouter
-from typing import Optional, Dict, Any
-import httpx
 import json
-from ..models import ActionRequest, ActionResult
+from typing import Any, Dict, Optional
+
+import httpx
+from fastapi import APIRouter
+
 from ..db import log_action
+from ..models import ActionRequest, ActionResult
 
 router = APIRouter()
 
@@ -36,7 +38,12 @@ async def run_http(req: ActionRequest):
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             resp = await client.request(
-                method, url, headers=headers, params=qparams, json=json_body, data=data_body
+                method,
+                url,
+                headers=headers,
+                params=qparams,
+                json=json_body,
+                data=data_body,
             )
         out = f"HTTP {resp.status_code}\n{resp.text[:2000]}"
         status = "ok" if 200 <= resp.status_code < 400 else "error"

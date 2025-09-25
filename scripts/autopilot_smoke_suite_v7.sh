@@ -71,7 +71,7 @@ if [[ -f "$ENV_FILE" ]]; then cp -a "$ENV_FILE" "$ORIG_ENV"; else : > "$ORIG_ENV
 build_env_from_orig() {
   # שימוש: build_env_from_orig VAR1=VAL1 VAR2=VAL2 ...
   local tmp="$(mktemp)"
-  cp -a "$ORIG_ENV" "$tmp" 2>/dev/null || : 
+  cp -a "$ORIG_ENV" "$tmp" 2>/dev/null || :
   for kv in "$@"; do
     local k="${kv%%=*}"
     grep -v -E "^[[:space:]]*${k}=" "$tmp" > "${tmp}.clean" || true

@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-import os
 import json
-import time
+import os
 import subprocess
-from uuid import uuid4
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func
+from sqlalchemy import func, select  # noqa: F401
 from sqlalchemy.inspection import inspect as sa_inspect
 
 from ..db.session import get_session
 from ..models.tasks import (
-    Task,
     Action,
-    Run,
     Approval,
     AuditLog,
+    Run,
+    Task,
     TaskStatus,
     now_iso,
 )
@@ -152,7 +152,11 @@ RUNS_BASE.mkdir(parents=True, exist_ok=True)
 def _task_to_out(s, task: Task) -> TaskOut:
     approvals: List[Dict[str, Any]] = []
     try:
-        aps = s.execute(select(Approval).where(Approval.task_id == task.id)).scalars().all()
+        aps = (
+            s.execute(select(Approval).where(Approval.task_id == task.id))
+            .scalars()
+            .all()
+        )
         for a in aps:
             approvals.append(
                 {
@@ -268,7 +272,11 @@ def approve_task(task_id: str, body: ApprovalIn):
         if not t:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        ap = s.execute(select(Approval).where(Approval.task_id == task_id)).scalars().first()
+        ap = (
+            s.execute(select(Approval).where(Approval.task_id == task_id))
+            .scalars()
+            .first()
+        )
         if not ap or ap.token != body.token:
             raise HTTPException(status_code=400, detail="Invalid approval token")
 
@@ -300,7 +308,9 @@ def run_task(task_id: str):
         if t.require_approval and t.status != "APPROVED":
             raise HTTPException(status_code=400, detail="Task requires approval")
 
-        acts = s.execute(select(Action).where(Action.task_id == task_id)).scalars().all()
+        acts = (
+            s.execute(select(Action).where(Action.task_id == task_id)).scalars().all()
+        )
         if not acts:
             raise HTTPException(status_code=400, detail="No actions to run")
 
@@ -308,12 +318,16 @@ def run_task(task_id: str):
 
         for a in acts:
             if a.type != "shell":
-                raise HTTPException(status_code=400, detail=f"Unsupported action type: {a.type}")
+                raise HTTPException(
+                    status_code=400, detail=f"Unsupported action type: {a.type}"
+                )
 
             params = json.loads(a.params_json or "{}")
             cmd = params.get("cmd")
             if not cmd:
-                raise HTTPException(status_code=400, detail="shell action missing 'cmd'")
+                raise HTTPException(
+                    status_code=400, detail="shell action missing 'cmd'"
+                )
 
             run_id = str(uuid4())
             run_dir = RUNS_BASE / run_id
@@ -399,7 +413,9 @@ def run_task(task_id: str):
                 )
             )
 
-        t.status = "FAILED" if any(ro.status == "FAILED" for ro in results) else "SUCCEEDED"
+        t.status = (
+            "FAILED" if any(ro.status == "FAILED" for ro in results) else "SUCCEEDED"
+        )
         t.updated_at = now_iso()
         safe_commit(s)
 
@@ -509,7 +525,9 @@ def _tail_bytes(path: Optional[str], limit: int = 400) -> Optional[str]:
 _AUTOPILOT_TOKEN = os.environ.get("LUCY_AUTOPILOT_TOKEN", "").strip()
 _TIMEOUT_SEC = int(os.environ.get("LUCY_AUTOPILOT_TIMEOUT_SECONDS", "30"))
 _MIN_INTERVAL_SEC = float(os.environ.get("LUCY_AUTOPILOT_MIN_INTERVAL_SEC", "1.0"))
-_RATE_FILE = Path(os.environ.get("LUCY_AUTOPILOT_RATE_FILE", "/tmp/lucy_autopilot.rate"))
+_RATE_FILE = Path(
+    os.environ.get("LUCY_AUTOPILOT_RATE_FILE", "/tmp/lucy_autopilot.rate")
+)
 
 # Allow/Deny (מחרוזות; allow כ-prefixים, deny כ-substrings)
 _DEFAULT_DENY = [
@@ -537,7 +555,9 @@ _DEFAULT_DENY = [
     "wget -qO- | sh",
 ]
 _ALLOW_PREFIXES = [
-    p.strip() for p in os.environ.get("LUCY_AUTOPILOT_ALLOW", "").split(",") if p.strip()
+    p.strip()
+    for p in os.environ.get("LUCY_AUTOPILOT_ALLOW", "").split(",")
+    if p.strip()
 ]
 _DENY_SUBSTR = [
     d.strip() for d in os.environ.get("LUCY_AUTOPILOT_DENY", "").split(",") if d.strip()
@@ -548,9 +568,9 @@ def _auth_check(req: Request):
     if not _AUTOPILOT_TOKEN:
         # אם אין טוקן בהגדרות — לא מחייבים כרגע (MVP). ל-Hardening הפוך ל-Required.
         return
-    hdr = req.headers.get("x-api-key", "") or req.headers.get("authorization", "").replace(
-        "Bearer ", ""
-    )
+    hdr = req.headers.get("x-api-key", "") or req.headers.get(
+        "authorization", ""
+    ).replace("Bearer ", "")
     if hdr != _AUTOPILOT_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -575,12 +595,16 @@ def _allow_deny_check(cmd: str):
     # אם מוגדר Allow — צריך לעבור אחד מהם (prefix)
     if _ALLOW_PREFIXES:
         if not any(c.startswith(p) for p in _ALLOW_PREFIXES):
-            raise HTTPException(status_code=400, detail="Command not allowed by policy (allowlist)")
+            raise HTTPException(
+                status_code=400, detail="Command not allowed by policy (allowlist)"
+            )
     # Deny substrings
     low = c.lower()
     for bad in _DENY_SUBSTR:
         if bad and bad.lower() in low:
-            raise HTTPException(status_code=400, detail=f"Command blocked by denylist: {bad}")
+            raise HTTPException(
+                status_code=400, detail=f"Command blocked by denylist: {bad}"
+            )
 
 
 def _resource_limiter():
@@ -596,13 +620,19 @@ def _resource_limiter():
                 pass
             try:
                 # זיכרון (כתובת וירטואלית) ~ 512MB ברירת מחדל
-                mem = int(os.environ.get("LUCY_AUTOPILOT_MAX_AS_MB", "512")) * 1024 * 1024
+                mem = (
+                    int(os.environ.get("LUCY_AUTOPILOT_MAX_AS_MB", "512")) * 1024 * 1024
+                )
                 resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
             except Exception:
                 pass
             try:
                 # גודל קובץ פלט מקס' 32MB
-                fs = int(os.environ.get("LUCY_AUTOPILOT_MAX_FSIZE_MB", "32")) * 1024 * 1024
+                fs = (
+                    int(os.environ.get("LUCY_AUTOPILOT_MAX_FSIZE_MB", "32"))
+                    * 1024
+                    * 1024
+                )
                 resource.setrlimit(resource.RLIMIT_FSIZE, (fs, fs))
             except Exception:
                 pass
@@ -675,7 +705,9 @@ def quick_run(payload: QuickRunIn, request: Request):
             next_idx = 1
             if "idx" in A:
                 max_idx = s.scalar(
-                    select(func.max(Action.idx)).where(Action.task_id == getattr(t_db, "id", None))
+                    select(func.max(Action.idx)).where(
+                        Action.task_id == getattr(t_db, "id", None)
+                    )
                 )
                 next_idx = (max_idx or 0) + 1
 
@@ -704,7 +736,9 @@ def quick_run(payload: QuickRunIn, request: Request):
             if "updated_at" in A:
                 a_kwargs["updated_at"] = now_iso()
             if "params_json" in A:
-                a_kwargs["params_json"] = json.dumps({"cmd": cmd} if cmd is not None else {})
+                a_kwargs["params_json"] = json.dumps(
+                    {"cmd": cmd} if cmd is not None else {}
+                )
 
             s.add(Action(**a_kwargs))
         safe_commit(s)
@@ -715,14 +749,16 @@ def quick_run(payload: QuickRunIn, request: Request):
         A = _cols(Action)
         order_clause = Action.idx if "idx" in A else Action.id
         acts = s.scalars(
-            select(Action).where(Action.task_id == getattr(t, "id", None)).order_by(order_clause)
+            select(Action)
+            .where(Action.task_id == getattr(t, "id", None))
+            .order_by(order_clause)
         ).all()
 
         if not acts:
             if hasattr(t, "status"):
-                setattr(t, "status", "SUCCEEDED")
+                t.status = "SUCCEEDED"
             if hasattr(t, "updated_at"):
-                setattr(t, "updated_at", now_iso())
+                t.updated_at = now_iso()
             safe_commit(s)
         else:
             preexec = _resource_limiter()
@@ -749,7 +785,11 @@ def quick_run(payload: QuickRunIn, request: Request):
                         raw = getattr(act, "params_json", None)
                         if isinstance(raw, (bytes, bytearray)):
                             raw = raw.decode("utf-8", "ignore")
-                        obj = json.loads(raw or "{}") if isinstance(raw, str) else (raw or {})
+                        obj = (
+                            json.loads(raw or "{}")
+                            if isinstance(raw, str)
+                            else (raw or {})
+                        )
                         if isinstance(obj, dict):
                             cmd_val = obj.get("cmd")
                     except Exception:
@@ -768,7 +808,9 @@ def quick_run(payload: QuickRunIn, request: Request):
 
                 try:
                     if getattr(act, "type", None) != "shell":
-                        raise RuntimeError(f"Unsupported action type: {getattr(act, 'type', None)}")
+                        raise RuntimeError(
+                            f"Unsupported action type: {getattr(act, 'type', None)}"
+                        )
                     if not cmd_val:
                         raise RuntimeError("Missing shell cmd")
 
@@ -777,7 +819,8 @@ def quick_run(payload: QuickRunIn, request: Request):
 
                     run_dir = Path(
                         os.environ.get(
-                            "LUCY_RUNS_DIR", str(Path.home() / ".local/share/lucy-agent/runs")
+                            "LUCY_RUNS_DIR",
+                            str(Path.home() / ".local/share/lucy-agent/runs"),
                         )
                     ) / (getattr(r, "id", "run"))
                     run_dir.mkdir(parents=True, exist_ok=True)
@@ -838,8 +881,12 @@ def quick_run(payload: QuickRunIn, request: Request):
                             "action_id": getattr(act, "id", None),
                             "exit_code": -1,
                             "error": f"timeout({_TIMEOUT_SEC}s)",
-                            "stdout_tail": _tail_bytes(getattr(r, "stdout_path", None), 400),
-                            "stderr_tail": _tail_bytes(getattr(r, "stderr_path", None), 400),
+                            "stdout_tail": _tail_bytes(
+                                getattr(r, "stdout_path", None), 400
+                            ),
+                            "stderr_tail": _tail_bytes(
+                                getattr(r, "stderr_path", None), 400
+                            ),
                         },
                     )
 
@@ -860,8 +907,12 @@ def quick_run(payload: QuickRunIn, request: Request):
                             "action_id": getattr(act, "id", None),
                             "exit_code": getattr(r, "exit_code", None),
                             "error": str(e),
-                            "stdout_tail": _tail_bytes(getattr(r, "stdout_path", None), 400),
-                            "stderr_tail": _tail_bytes(getattr(r, "stderr_path", None), 400),
+                            "stdout_tail": _tail_bytes(
+                                getattr(r, "stdout_path", None), 400
+                            ),
+                            "stderr_tail": _tail_bytes(
+                                getattr(r, "stderr_path", None), 400
+                            ),
                         },
                     )
 
@@ -883,17 +934,16 @@ def quick_run(payload: QuickRunIn, request: Request):
             with get_session() as s2:
                 t_db2 = s2.scalar(select(Task).where(Task.id == getattr(t, "id", None)))
                 if t_db2 and hasattr(t_db2, "status"):
-                    setattr(
-                        t_db2,
-                        "status",
-                        (
-                            "FAILED"
-                            if any(getattr(ro, "status", None) == "FAILED" for ro in run_results)
-                            else "SUCCEEDED"
-                        ),
+                    t_db2.status = (
+                        "FAILED"
+                        if any(
+                            getattr(ro, "status", None) == "FAILED"
+                            for ro in run_results
+                        )
+                        else "SUCCEEDED"
                     )
                 if t_db2 and hasattr(t_db2, "updated_at"):
-                    setattr(t_db2, "updated_at", now_iso())
+                    t_db2.updated_at = now_iso()
                 safe_commit(s2)
 
     # 4) Audit לפי created_at + המרת data ל-dict (ונשמר ה-fallback הסינתטי אם חסר end)
@@ -932,8 +982,12 @@ def quick_run(payload: QuickRunIn, request: Request):
                         data={
                             "action_id": ro.action_id,
                             "exit_code": ro.exit_code,
-                            "stdout_tail": _tail_bytes(getattr(ro, "stdout_path", None), 400),
-                            "stderr_tail": _tail_bytes(getattr(ro, "stderr_path", None), 400),
+                            "stdout_tail": _tail_bytes(
+                                getattr(ro, "stdout_path", None), 400
+                            ),
+                            "stderr_tail": _tail_bytes(
+                                getattr(ro, "stderr_path", None), 400
+                            ),
                             "synthetic": True,
                         },
                         created_at=now_iso(),
@@ -945,7 +999,9 @@ def quick_run(payload: QuickRunIn, request: Request):
         t_final = s.scalar(select(Task).where(Task.id == getattr(t, "id", None)))
         task_out = _task_to_out(s, t_final)
 
-    return _fix_timeout_semantics(QuickRunOut(task=task_out, runs=run_results, audit=audit_out))
+    return _fix_timeout_semantics(
+        QuickRunOut(task=task_out, runs=run_results, audit=audit_out)
+    )
 
 
 # ------------------ Agent Shell ------------------

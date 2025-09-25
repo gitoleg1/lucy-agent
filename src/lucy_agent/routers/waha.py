@@ -1,9 +1,12 @@
 from __future__ import annotations
-from fastapi import APIRouter, Body, Depends, HTTPException
+
 from typing import Any, Dict
-from ..security import require_api_key
-from ..clients.waha_client import WahaClient
+
 import httpx
+from fastapi import APIRouter, Body, Depends, HTTPException
+
+from ..clients.waha_client import WahaClient
+from ..security import require_api_key
 
 router = APIRouter(prefix="/waha", tags=["waha"])
 

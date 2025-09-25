@@ -1,14 +1,16 @@
 from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Any, Dict
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .db import SessionLocal
-from .models import Task as TaskORM, EventLog, RunStatus
+from .models import EventLog, RunStatus
+from .models import Task as TaskORM
 
 UTC = timezone.utc
 
@@ -18,7 +20,10 @@ async def _log(
 ):
     session.add(
         EventLog(
-            task_id=task_id, ts=datetime.now(UTC), event_type=event_type, payload=payload or {}
+            task_id=task_id,
+            ts=datetime.now(UTC),
+            event_type=event_type,
+            payload=payload or {},
         )
     )
     await session.flush()
@@ -29,7 +34,9 @@ async def run_task(task_id: str):
     async with SessionLocal() as session:
         # טען משימה + steps
         res = await session.execute(
-            select(TaskORM).options(selectinload(TaskORM.steps)).where(TaskORM.id == task_id)
+            select(TaskORM)
+            .options(selectinload(TaskORM.steps))
+            .where(TaskORM.id == task_id)
         )
         task = res.scalar_one_or_none()
         if not task:
@@ -44,7 +51,9 @@ async def run_task(task_id: str):
         if not task.steps:
             task.status = RunStatus.failed.value
             task.ended_at = datetime.now(UTC)
-            await _log(session, task_id, "done", {"status": task.status, "error": "no steps"})
+            await _log(
+                session, task_id, "done", {"status": task.status, "error": "no steps"}
+            )
             await session.commit()
             return
 
@@ -70,7 +79,9 @@ async def run_task(task_id: str):
             step.stderr = (stderr_b or b"").decode(errors="replace")
             step.ended_at = datetime.now(UTC)
             step.status = (
-                RunStatus.succeeded.value if proc.returncode == 0 else RunStatus.failed.value
+                RunStatus.succeeded.value
+                if proc.returncode == 0
+                else RunStatus.failed.value
             )
 
             task.status = step.status
@@ -96,7 +107,11 @@ async def run_task(task_id: str):
                 "done",
                 {
                     "status": task.status,
-                    "result": {"task_id": task.id, "title": task.title, "status": task.status},
+                    "result": {
+                        "task_id": task.id,
+                        "title": task.title,
+                        "status": task.status,
+                    },
                 },
             )
             await session.commit()
@@ -106,5 +121,7 @@ async def run_task(task_id: str):
             step.ended_at = datetime.now(UTC)
             task.status = RunStatus.failed.value
             task.ended_at = datetime.now(UTC)
-            await _log(session, task_id, "done", {"status": task.status, "error": str(e)})
+            await _log(
+                session, task_id, "done", {"status": task.status, "error": str(e)}
+            )
             await session.commit()

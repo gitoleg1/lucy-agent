@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Aggregator exports for ORM models so that:
 from src.models import Task, Run, Action, AuditLog
@@ -6,6 +5,7 @@ will work regardless of the file layout.
 
 We try common module names and fall back gracefully.
 """
+
 from importlib import import_module
 
 __all__ = ["Task", "Run", "Action", "AuditLog"]
