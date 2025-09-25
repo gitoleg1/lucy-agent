@@ -1,59 +1,54 @@
 #!/usr/bin/env bash
 # scripts/ci_wait_and_fetch.sh
-# מחכה לריצה האחרונה של ה־CI להסתיים (ללא אינטראקציה), ואז מוריד ארטיפקטים ומציג לוגים.
-
+# מחכה לריצה האחרונה ב-GitHub Actions שתסתיים, מוריד ארטיפקטים ומציג לוגים רלוונטיים.
 set -euo pipefail
 
-REPO="${1:-}"
-if [[ -z "${REPO}" ]]; then
-  echo "[INFO] מזהה ריפו דרך gh…"
-  REPO="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+log() { printf '[INFO] %s\n' "$*"; }
+warn() { printf '⚠️  %s\n' "$*" >&2; }
+
+# 1) זיהוי הריפו ו-RUN_ID אחרון
+log "מזהה ריפו דרך gh…"
+REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+log "REPO=$REPO"
+
+log "לוכד/ת RUN_ID של הריצה האחרונה…"
+RUN_ID=$(gh run list --repo "$REPO" --limit 1 --json databaseId --jq '.[0].databaseId')
+if [[ -z "${RUN_ID:-}" ]]; then
+  warn "לא נמצא RUN_ID"; exit 1
 fi
-echo "[INFO] REPO=${REPO}"
+log "RUN_ID=$RUN_ID"
 
-echo "[INFO] לוכד/ת RUN_ID של הריצה האחרונה…"
-# נוסיף ריטריי קטן למקרי 500/404 רגעיים
-RUN_ID=""
-for i in {1..6}; do
-  RUN_ID="$(gh run list -R "${REPO}" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
-  [[ -n "${RUN_ID}" ]] && break
-  echo "[WARN] לא הוחזר RUN_ID (ניסיון ${i}) — ממתין/ה 5 שניות…"
-  sleep 5
-done
-if [[ -z "${RUN_ID}" ]]; then
-  echo "[ERROR] נכשל להשיג RUN_ID גם אחרי ריטריי. בדוק/י חיבור/הרשאות gh ונסו שוב."
-  exit 1
-fi
-echo "[INFO] RUN_ID=${RUN_ID}"
+# 2) תקציר מצב הריצה
+log "מציג/ה תקציר הריצה…"
+gh run view "$RUN_ID" --repo "$REPO" --json databaseId,url,status,conclusion,headBranch,headSha,workflowName,displayTitle \
+  --jq '"URL="+.url, "status="+.status+" conclusion="+( .conclusion//"n/a")+" | "+.headBranch+"@"+.headSha[0:7], "workflow="+.workflowName+" | "+.displayTitle'
 
-echo "[INFO] מציג/ה תקציר הריצה…"
-gh run view -R "${REPO}" "${RUN_ID}" --json url,status,conclusion,workflowName,displayTitle,headBranch,headSha \
-  --jq '"URL=" + .url + "\nstatus=" + .status + " conclusion=" + (.conclusion//"") + " | " + .headBranch + "@" + .headSha + "\nworkflow=" + .workflowName + " | " + .displayTitle'
+# 3) המתנה עד סיום (אם עדיין רצה)
+log "ממתין/ה לריצה שתסתיים (לא אינטראקטיבי)…"
+# אם כבר הסתיים, הפקודה תחזור מיד
+gh run watch "$RUN_ID" --repo "$REPO" || true
 
-echo "[INFO] ממתין/ה לאותה ריצה שתסתיים (לא אינטראקטיבי)…"
-# חשוב: מציינים את ה־RUN_ID כדי לא לקבל תפריט בחירה
-gh run watch -R "${REPO}" "${RUN_ID}" --exit-status || true
+# 4) הצגת לוגים מרוכזת לקונסול
+log "מציג/ה לוגים…"
+# נציג HEAD של ה־job העיקרי (תמיד יש רק job אחד אצלך בשם ci)
+gh run view "$RUN_ID" --repo "$REPO" --log | sed -n '1,400p' || true
 
-echo "[INFO] מוריד/ה ארטיפקטים (smoke-artifacts)…"
-rm -rf artifact && mkdir -p artifact
-if gh run download -R "${REPO}" "${RUN_ID}" --name smoke-artifacts --dir ./artifact 2>/dev/null; then
-  echo "[INFO] הורדו ארטיפקטים ל־./artifact"
-else
-  echo "[WARN] לא נמצאו ארטיפקטים בשם 'smoke-artifacts' לריצה ${RUN_ID}"
-fi
+# 5) הורדת ארטיפקטים (כולל /tmp/api.out והלוגים שה־workflow מעלה)
+ART_DIR="./artifact"
+log "מוריד/ה ארטיפקטים (smoke-artifacts)…"
+mkdir -p "$ART_DIR"
+gh run download "$RUN_ID" --repo "$REPO" -n smoke-artifacts -D "$ART_DIR" || warn "אין ארטיפקטים להוריד"
 
+# 6) תצוגת לוגים מהארטיפקט/טמפ
 echo "---- smoke.log ----"
-sed -n '1,200p' artifact/artifacts/logs/smoke.log 2>/dev/null || echo "אין smoke.log בארטיפקט"
+sed -n '1,200p' "$ART_DIR/artifacts/logs/smoke.log" 2>/dev/null || echo "אין smoke.log בארטיפקט"
 
-echo "---- api.out ----"
-# הועלה מה־CI כ־/tmp/api.out ולכן יורד ל־artifact/tmp/api.out
-tail -n 200 artifact/tmp/api.out 2>/dev/null || echo "אין api.out בארטיפקט"
+echo "---- env.txt ----"
+sed -n '1,120p' "$ART_DIR/artifacts/logs/env.txt" 2>/dev/null || echo "אין env.txt בארטיפקט"
 
-echo "---- חיווי מעבר ----"
-if grep -Eq "SMOKE v11 — הושלם בהצלחה|Health-only ✅" artifact/artifacts/logs/smoke.log 2>/dev/null; then
-  echo "✅ נמצאה אינדיקציית הצלחה בסמוק"
-else
-  echo "⚠️  לא נמצאה אינדיקציית הצלחה בסמוק (בדוק/י את הלוגים למעלה)"
-fi
+echo "---- api.out (סוף 200 שורות) ----"
+tail -n 200 /tmp/api.out 2>/dev/null \
+  || tail -n 200 "$ART_DIR/tmp/api.out" 2>/dev/null \
+  || echo "אין api.out"
 
-echo "[INFO] סיום. קבצים: artifact/ (אם קיימים)."
+log "סיום. קבצים בתיקייה: $ART_DIR (אם קיימים)."
