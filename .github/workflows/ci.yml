@@ -2,17 +2,19 @@ name: CI
 
 on:
   push:
+    branches: [ "main" ]
   pull_request:
-  workflow_dispatch:
+    branches: [ "main" ]
 
 jobs:
-  ci:
+  tests:
+    name: tests
     runs-on: ubuntu-24.04
+
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONFAULTHANDLER: "1"
-      PYTHONPATH: src
-      SMOKE_ARTIFACT: smoke-artifacts
+      PYTHONPATH: "src"
 
     steps:
       - name: Checkout
@@ -23,87 +25,30 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Ensure jq is available
-        shell: bash
-        run: |
-          set -euo pipefail
-          jq --version || { sudo apt-get update -y && sudo apt-get install -y jq; }
-          jq --version
-
-      - name: Pre-create artifact dirs (always)
-        if: always()
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/json artifacts/logs artifacts/tmp
-          : > /tmp/api.out || true
-
       - name: Install deps
         shell: bash
         run: |
           set -euxo pipefail
+          python -m venv .venv
+          . .venv/bin/activate
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install "httpx>=0.27,<0.28"
-          python - <<'PY'
-          import sys, platform, pkgutil
-          print("python:", sys.version)
-          print("platform:", platform.platform())
-          for name in ["fastapi","starlette","uvicorn","httpx","pydantic"]:
-              try:
-                  mod = __import__(name)
-                  print(name, getattr(mod, "__version__", "unknown"))
-              except Exception as e:
-                  print(name, "IMPORT ERROR:", e)
-          PY
+          # כלי טסטים
+          pip install pytest
 
-      - name: Import sanity (src-layout)
+      - name: Run pytest
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import importlib
-          m = importlib.import_module("lucy_agent.main")
-          assert hasattr(m, "app"), "lucy_agent.main חייב להכיל app של FastAPI"
-          print("import sanity: OK")
-          PY
-
-      - name: Smoke /health via TestClient (no server)
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from lucy_agent.main import app
-          from starlette.testclient import TestClient
-          with TestClient(app) as client:
-              r = client.get("/health")
-              print("status_code:", r.status_code)
-              print("json:", r.json())
-              assert r.status_code == 200, "bad status code"
-              assert r.json().get("status") == "ok", "unexpected /health payload"
-          print("health: OK")
-          PY
-
-      - name: Stop API (best-effort)
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ -f /tmp/api.pid ]]; then
-            kill "$(cat /tmp/api.pid)" 2>/dev/null || true
-            sleep 1 || true
-          fi
-          fuser -k 8000/tcp || true
-
-      - name: Package artifacts
-        if: always()
-        run: |
-          set -euo pipefail
-          cp -f /tmp/api.out artifacts/tmp/api.out 2>/dev/null || true
+          . .venv/bin/activate
+          pytest -q
 
       - name: Upload smoke artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.SMOKE_ARTIFACT }}
-          path: artifacts/**
+          name: smoke-artifacts
+          path: |
+            .pytest_cache
+            artifacts/**
           if-no-files-found: warn
