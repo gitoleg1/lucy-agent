@@ -38,22 +38,28 @@ jobs:
         run: |
           mkdir -p artifact_ci/logs
 
+      # דיאגנוסטיקה מוקדמת לפיפ
       - name: Pip diagnostics (pre)
         continue-on-error: true
         run: |
           python -m pip debug > artifact_ci/logs/pip-debug.txt 2>&1 || true
           pip config list -v > artifact_ci/logs/pip-config.txt 2>&1 || true
 
-      - name: Install deps (capture logs; no greenlet)
+      # התקנה — לוגים מלאים ושמירת RC לקובץ, לא מפילים כאן
+      - name: Install deps (capture logs; no greenlet in requirements files)
         id: install
         shell: bash
         run: |
           set -Eeuo pipefail
+          # הסרה פרואקטיבית של greenlet מתוך קבצי הדרישות (אם קיים)
           sed -i '/^\s*greenlet\b/d' requirements*.txt || true
+
           { pip install -r requirements.txt ; echo $? > artifact_ci/logs/install.rc ; } \
             > artifact_ci/logs/pip-install.out 2> artifact_ci/logs/pip-install.err || true
+
           pip freeze > artifact_ci/logs/pip-freeze.txt || true
 
+      # מעלים ארטיפקטים תמיד, כדי שלא נאבד לוגים גם אם תהיה תקלה בהמשך
       - name: Upload artifacts (always - post install)
         if: always()
         uses: actions/upload-artifact@v4
@@ -64,6 +70,7 @@ jobs:
           retention-days: 7
           overwrite: true
 
+      # מפילים רק אחרי העלאת ארטיפקטים
       - name: Fail if install failed
         shell: bash
         run: |
@@ -74,11 +81,49 @@ jobs:
             exit 1
           fi
 
+      # אכיפת "ללא greenlet" + pip check עם לוגים ו-RC נשמר
+      - name: Enforce no greenlet & pip check (capture)
+        id: nogreenlet
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          : > artifact_ci/logs/pip-check.out
+          : > artifact_ci/logs/pip-check.err
+
+          # נסיר greenlet אם הותקן דרך תלות עקיפה
+          pip uninstall -y greenlet >/dev/null 2>&1 || true
+
+          # בדיקת עקביות חבילות
+          { pip check ; echo $? > artifact_ci/logs/pip-check.rc ; } \
+            > artifact_ci/logs/pip-check.out 2> artifact_ci/logs/pip-check.err || true
+
+          echo "pip-check.rc=$(cat artifact_ci/logs/pip-check.rc || echo 1)"
+
+      - name: Upload artifacts (always - post pip check)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-artifacts
+          path: artifact_ci/**
+          if-no-files-found: warn
+          retention-days: 7
+          overwrite: true
+
+      - name: Fail if pip check failed
+        shell: bash
+        run: |
+          RC="$(cat artifact_ci/logs/pip-check.rc 2>/dev/null || echo 1)"
+          echo "pip-check.rc=$RC"
+          if [ "$RC" -ne 0 ]; then
+            echo "pip check reported issues (rc=$RC). See pip-check.out/err."
+            exit 1
+          fi
+
+      # לינט — לוכדים לוגים
       - name: Lint (ruff & black) — capture logs
         shell: bash
         run: |
           set -Eeuo pipefail
-          # פולבק: אם אין requirements-dev.txt נתקין רף/בלק ידנית
           if [[ -f requirements-dev.txt ]]; then
             pip install -r requirements-dev.txt || true
           fi
@@ -97,6 +142,7 @@ jobs:
             fi
           } 2>&1 | tee -a artifact_ci/logs/lint.out
 
+      # בדיקות
       - name: Run tests (pytest + health)
         env:
           PYTHONPATH: src
@@ -104,6 +150,7 @@ jobs:
         run: |
           pytest -q --maxfail=1 -k "health or smoke" 2>&1 | tee artifact_ci/logs/pytest.out
 
+      # העלאה סופית — תמיד
       - name: Upload artifacts (final - always)
         if: always()
         uses: actions/upload-artifact@v4
