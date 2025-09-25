@@ -1,34 +1,36 @@
-[tool.poetry]
-name = "lucy-agent"
-version = "0.1.0"
-description = "Agent להרצת משימות: טרמינל/SSH/DevOps/WAHA"
-authors = ["Master Oleg"]
-readme = "README.md"
-packages = [{ include = "lucy_agent", from = "src" }]
-
-[tool.poetry.dependencies]
-paramiko = "^3.5.0"
-docker = "^7.1.0"
-python = "^3.11"
-fastapi = "^0.115.0"
-uvicorn = {version="^0.30.0", extras=["standard"]}
-pydantic = "^2.8.0"
-loguru = "^0.7.2"
-python-dotenv = "^1.0.1"
-httpx = "^0.27"
-sse-starlette = "^3.0.2"
-
-[tool.poetry.group.dev.dependencies]
-pre-commit = "^3.7.0"
-pytest = "^8.2.0"
-
-[tool.poetry.scripts]
-lucy-agent = "lucy_agent.main:run"
-
 [tool.black]
-line-length = 100
+line-length = 88
 target-version = ["py311"]
+include = '\.pyi?$'
+exclude = '''
+(
+  /(\.git|\.venv|venv|env|build|dist|\.mypy_cache|\.pytest_cache|\.ruff_cache|artifact|artifact_ci)/
+)
+'''
 
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+# סט חוקים בסיסי: שגיאות/אזהרות, ייבוא, באגים שכיחים
+select = ["E", "F", "I", "B"]
+ignore = []  # נוכל להוסיף בהמשך אם נדרש
+src = ["."]
+exclude = [
+  ".git",
+  ".venv",
+  "venv",
+  "env",
+  "build",
+  "dist",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  "artifact",
+  "artifact_ci",
+]
+
+[tool.ruff.lint.isort]
+# יישור לרוחב שורה של 88 ופרופיל Black
+known-first-party = ["."]
+combine-as-imports = true
+force-sort-within-sections = true
