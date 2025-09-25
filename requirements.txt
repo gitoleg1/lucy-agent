@@ -3,7 +3,7 @@ uvicorn==0.36.0
 pydantic==2.11.9
 SQLAlchemy==2.0.43
 
-# תלותות לבדיקות/קליינט
+# בדיקות וקליינט
 starlette==0.48.0
 httpx==0.27.2
 pytest==8.3.3

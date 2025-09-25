@@ -10,6 +10,7 @@ jobs:
       PYTHONUNBUFFERED: "1"
       PYTHONFAULTHANDLER: "1"
       PYTHONPATH: src
+      PYTHONNOUSERSITE: "1"   # למנוע זיהום מסביבת המשתמש
       SMOKE_ARTIFACT: smoke-artifacts
 
     steps:
@@ -25,23 +26,28 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/logs artifacts/tmp
-          : > artifacts/logs/pytest.out || true
+          : > artifacts/logs/pip-install.out || true
           : > artifacts/logs/pip-freeze.txt || true
+          : > artifacts/logs/pytest.out || true
+          python -V | tee artifacts/logs/python-version.txt
+          uname -a | tee artifacts/logs/uname.txt
 
-      - name: Install deps (no greenlet)
+      - name: Install deps (capture full pip logs)
         run: |
           set -euxo pipefail
           python -m venv .venv
-          ./.venv/bin/python -m pip install --upgrade pip
-          ./.venv/bin/python -m pip install -r requirements.txt
-          # לוודא שאין greenlet
-          ./.venv/bin/python -m pip uninstall -y greenlet || true
-          ./.venv/bin/python -m pip freeze | tee artifacts/logs/pip-freeze.txt
+          ./.venv/bin/python -m pip install --upgrade pip setuptools wheel
+          # נתקין עם עדיפות לבינארי ונאגור לוג מפורט לארטיפקטים
+          (.venv/bin/python -m pip install --prefer-binary -r requirements.txt -vvv) \
+            2>&1 | tee artifacts/logs/pip-install.out
+          # וידוא שאין greenlet
           ./.venv/bin/python - <<'PY'
-          import importlib, sys
-          m = importlib.util.find_spec("greenlet")
-          print("greenlet_present=", bool(m))
+          import importlib
+          print("greenlet_present=", bool(importlib.util.find_spec("greenlet")))
           PY
+          # צילום מצב חבילות + בדיקת תאימות תלויות
+          ./.venv/bin/python -m pip freeze | tee artifacts/logs/pip-freeze.txt
+          ./.venv/bin/python -m pip check | tee -a artifacts/logs/pip-install.out
 
       - name: Import sanity (src-layout)
         run: |
