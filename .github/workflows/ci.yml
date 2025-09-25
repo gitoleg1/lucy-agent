@@ -1,32 +1,125 @@
-      - name: Install deps (robust)
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-24.04
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONFAULTHANDLER: "1"
+      PYTHONPATH: src
+      APP_MODULE: lucy_agent.main:app
+      HOST: 127.0.0.1
+      PORT: "8000"
+      SMOKE_ARTIFACT: smoke-artifacts
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ensure jq is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq --version || { sudo apt-get update -y && sudo apt-get install -y jq; }
+          jq --version
+
+      - name: Pre-create artifact dirs (always)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/json artifacts/logs artifacts/tmp
+          : > /tmp/api.out || true
+
+      # התקנת תלויות — נשענים על requirements.txt בלבד (לא מנחשים).
+      - name: Install deps
         shell: bash
         run: |
           set -euxo pipefail
           python -m venv .venv
           ./.venv/bin/python -m pip install --upgrade pip
+          ./.venv/bin/python -m pip install -r requirements.txt
+          # ביטוח: מוודאים ש-fastapi+uvicorn אכן מותקנים
+          ./.venv/bin/python -m pip install fastapi uvicorn
 
-          # דרישות הפרויקט (אם ריק/לא קיים לא מפילים את ה-CI)
-          ( [ -f requirements.txt ] && ./.venv/bin/python -m pip install -r requirements.txt ) || true
-
-          # תיקון קריסת greenlet בסביבת ubuntu-24.04 אם צריך (ייבוא תקין של importlib.metadata)
+      # בדיקת יבוא מודול ושהאפליקציה מכילה app של FastAPI
+      - name: Import sanity (src-layout)
+        shell: bash
+        run: |
+          set -euo pipefail
           ./.venv/bin/python - <<'PY'
-          import sys, subprocess
-          try:
-              from importlib.metadata import version, PackageNotFoundError
-          except Exception:
-              # אם מסיבה כלשהי אין importlib.metadata, לא מפילים ריצה
-              print("skip greenlet check: no importlib.metadata", file=sys.stderr)
-              raise SystemExit(0)
-
-          try:
-              v = version("greenlet")
-          except PackageNotFoundError:
-              subprocess.check_call([sys.executable, "-m", "pip", "install", "greenlet==3.0.3"])
-          else:
-              if v.startswith(("3.1.", "3.2.")):
-                  subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "greenlet==3.0.3"])
-          print("greenlet pin/check: OK")
+          import importlib
+          m = importlib.import_module("lucy_agent.main")
+          assert hasattr(m, "app"), "lucy_agent.main חייב להכיל app של FastAPI"
+          print("import sanity: OK")
           PY
 
-          # מבטיחים FastAPI + Uvicorn זמינים
-          ./.venv/bin/python -m pip install fastapi uvicorn
+      # מעלים את ה-API ברקע ומחכים ל-/health
+      - name: Boot API (background) + wait for /health
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ./.venv/bin/python -m uvicorn --app-dir src "${APP_MODULE}" \
+            --host "${HOST}" --port "${PORT}" > /tmp/api.out 2>&1 &
+          echo $! > /tmp/api.pid
+
+          for i in $(seq 1 40); do
+            if curl -fsS "http://${HOST}:${PORT}/health" | jq -e '.status=="ok"' >/dev/null 2>&1; then
+              echo "health: OK"
+              exit 0
+            fi
+            sleep 0.5
+          done
+
+          echo "❌ לא עלה /health בזמן" >&2
+          echo "==== tail /tmp/api.out ====" >&2
+          tail -n 200 /tmp/api.out >&2 || true
+          exit 1
+
+      # עוצרים את השרת תמיד (גם במקרה כשל)
+      - name: Stop API (best-effort)
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f /tmp/api.pid ]]; then
+            kill "$(cat /tmp/api.pid)" 2>/dev/null || true
+            sleep 1 || true
+          fi
+          fuser -k ${PORT}/tcp || true
+
+      # במקרה כשל — שופכים זנב לוג
+      - name: Debug tails on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "==== tail /tmp/api.out ===="
+          tail -n 200 /tmp/api.out 2>/dev/null || echo "no /tmp/api.out"
+
+      # אורזים ארטיפקטים מינימליים
+      - name: Package artifacts
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -f /tmp/api.out artifacts/tmp/api.out 2>/dev/null || true
+
+      - name: Upload smoke artifacts (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.SMOKE_ARTIFACT }}
+          path: artifacts/**
+          if-no-files-found: warn
