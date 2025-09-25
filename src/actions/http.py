@@ -1,9 +1,11 @@
-from fastapi import APIRouter
-from typing import Optional, Dict, Any
-import httpx
 import json
-from ..models import ActionRequest, ActionResult
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter
+import httpx
+
 from ..db import log_action
+from ..models import ActionRequest, ActionResult
 
 router = APIRouter()
 

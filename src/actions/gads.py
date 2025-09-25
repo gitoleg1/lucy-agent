@@ -1,6 +1,7 @@
 from fastapi import APIRouter
-from ..models import ActionRequest, ActionResult
+
 from ..db import log_action
+from ..models import ActionRequest, ActionResult
 
 router = APIRouter()
 

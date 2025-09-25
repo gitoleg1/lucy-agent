@@ -1,4 +1,5 @@
 import os
+
 from fastapi import Header, HTTPException, Request, status
 
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")

@@ -1,11 +1,12 @@
 from __future__ import annotations
-from enum import Enum
-from typing import Optional, List
+
 from datetime import datetime
+from enum import Enum
+from typing import List, Optional
 import uuid
 
-from sqlalchemy import CheckConstraint, Index, String, Integer, Text, ForeignKey
-from sqlalchemy.orm import declarative_base, Mapped, mapped_column, relationship
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
 
 Base = declarative_base()
 
