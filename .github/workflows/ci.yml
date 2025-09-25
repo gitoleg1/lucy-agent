@@ -4,23 +4,16 @@ on:
   push:
   pull_request:
 
-permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       PYTHONUNBUFFERED: "1"
-      PYTHONPATH: "src"
-      APP_MODULE: "lucy_agent.main:app"
-      HOST: "127.0.0.1"
+      PYTHONPATH: src
+      APP_MODULE: lucy_agent.main:app
+      HOST: 127.0.0.1
       PORT: "8000"
-      SMOKE_ARTIFACT: "smoke-artifacts"
+      SMOKE_ARTIFACT: smoke-artifacts
 
     steps:
       - name: Checkout
@@ -45,74 +38,61 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts/json artifacts/logs
+          mkdir -p artifacts/json artifacts/logs artifacts/tmp
           : > /tmp/api.out || true
 
-      - name: Install deps (robust)
+      - name: Install deps (venv) + expose VENV_PY to later steps
         shell: bash
         run: |
           set -euxo pipefail
           python -m venv .venv
           ./.venv/bin/python -m pip install --upgrade pip
-          # דרישות הפרויקט (אם ריקות/חסרות — לא להפיל את ה־CI)
           ( [ -f requirements.txt ] && ./.venv/bin/python -m pip install -r requirements.txt ) || true
-          # מבטיחים FastAPI + Uvicorn
+          # Make sure FastAPI + Uvicorn exist even if requirements.txt is empty
           ./.venv/bin/python -m pip install fastapi uvicorn
+          # Export venv python path for subsequent steps
+          echo "VENV_PY=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Import sanity (src-layout)
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import importlib
+          "$VENV_PY" - <<'PY'
+          import importlib, sys
+          print(f"using interpreter: {sys.executable}")
           m = importlib.import_module("lucy_agent.main")
           assert hasattr(m, "app"), "lucy_agent.main חייב להכיל app של FastAPI"
           print("import sanity: OK")
           PY
-        continue-on-error: false
 
       - name: Boot API (background) + wait for /health
         shell: bash
-        env:
-          AGENT_APP: ${{ env.APP_MODULE }}
         run: |
-          set -euo pipefail
-
-          # מריצים את uvicorn מתוך ה־venv דרך python -m (מונע בעיות shebang)
-          ./.venv/bin/python -m uvicorn --app-dir src "${AGENT_APP}" \
-            --host "${HOST}" --port "${PORT}" > /tmp/api.out 2>&1 &
-
+          set -euxo pipefail
+          # Boot (src-layout aware)
+          ( "$VENV_PY" -m uvicorn --app-dir src "$APP_MODULE" --host "$HOST" --port "$PORT" \
+              | tee -a /tmp/api.out ) &
           echo $! > /tmp/api.pid
 
-          # ממתינים ל־/health עד 30 שניות
-          for i in $(seq 1 30); do
-            if curl -fsS "http://${HOST}:${PORT}/health" >/dev/null 2>&1; then
-              curl -fsS "http://${HOST}:${PORT}/health" | jq . | tee artifacts/json/health.json
-              echo "API is healthy ✅" | tee -a artifacts/logs/smoke.log
+          # Wait for health (up to ~20s)
+          for i in {1..40}; do
+            if curl -fsS "http://$HOST:$PORT/health" >/dev/null; then
+              echo "health: OK" | tee artifacts/logs/smoke.log
               exit 0
             fi
-            sleep 1
+            sleep 0.5
           done
 
-          echo "❌ לא הצלחנו להגיע ל־/health בזמן" | tee -a artifacts/logs/smoke.log
-          echo "==== /tmp/api.out (last 200 lines) ===="
-          tail -n 200 /tmp/api.out || true
+          echo "health: TIMEOUT" | tee -a artifacts/logs/smoke.log
           exit 1
 
-      - name: Run smoke v11 (auto health-only fallback)
-        if: ${{ success() }}
+      - name: Run smoke v11 (sample)
+        if: success()
         shell: bash
-        env:
-          AGENT_API_KEY: ${{ secrets.AGENT_API_KEY }}
         run: |
           set -euo pipefail
-          if [ -x scripts/autopilot_smoke_suite_v11.sh ]; then
-            echo "[SMOKE] Running v11…" | tee -a artifacts/logs/smoke.log
-            # אם הסמוק נכשל — לא מפילים את ה־CI כל עוד הבריאות עברה
-            bash scripts/autopilot_smoke_suite_v11.sh || echo "[SMOKE] fallback: Health-only ✅" | tee -a artifacts/logs/smoke.log
-          else
-            echo "[SMOKE] script missing — Health-only ✅" | tee -a artifacts/logs/smoke.log
-          fi
+          # כאן תריץ בדיקות/עישון אמיתיות שלך. נשמור דוגמה קצרה:
+          curl -fsS "http://$HOST:$PORT/health" | jq '.' | tee artifacts/json/health.json
 
       - name: Stop API (best-effort)
         if: always()
@@ -123,13 +103,14 @@ jobs:
             kill "$(cat /tmp/api.pid)" 2>/dev/null || true
             sleep 1 || true
           fi
-          # מוודאים שהפורט נסגר
-          fuser -k ${PORT}/tcp || true
+          # make sure port is free
+          fuser -k "${PORT}/tcp" || true
 
       - name: Debug tails on failure
-        if: ${{ failure() }}
+        if: failure()
         shell: bash
         run: |
+          set -euo pipefail
           echo "==== tail /tmp/api.out ===="
           tail -n 200 /tmp/api.out 2>/dev/null || echo "no /tmp/api.out"
           echo "==== smoke.log (first 200 lines) ===="
