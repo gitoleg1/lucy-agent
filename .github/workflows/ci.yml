@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Prepare artifact dirs (always)
+        run: |
+          mkdir -p artifact_ci/logs
+
+      - name: Install deps (no greenlet; capture logs)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python -V | tee artifact_ci/logs/python-version.txt
+          pip -V    | tee artifact_ci/logs/pip-version.txt
+
+          pip install -r requirements.txt \
+            > >(tee artifact_ci/logs/pip-install.out) \
+            2> >(tee artifact_ci/logs/pip-install.err >&2)
+
+          pip uninstall -y greenlet || true
+          pip check     | tee artifact_ci/logs/pip-check.out
+          pip freeze    | tee artifact_ci/logs/pip-freeze.txt
+
+          python - << 'PY' | tee artifact_ci/logs/import-versions.txt
+          import importlib, sys
+          for p in ["fastapi","starlette","httpx","pytest","uvicorn","anyio","h11"]:
+              try:
+                  m = importlib.import_module(p)
+                  v = getattr(m, "__version__", "unknown")
+                  print(f"{p}=={v}")
+              except Exception as e:
+                  print(f"{p} import failed: {e}", file=sys.stderr)
+          PY
+
+      - name: Import sanity (src-layout)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PYTHONPATH=src
+          python - << 'PY'
+          import importlib, sys
+          for m in ["lucy_agent","lucy_agent.main"]:
+              try:
+                  importlib.import_module(m)
+                  print("import ok:", m)
+              except Exception as e:
+                  print("import failed:", m, e, file=sys.stderr); sys.exit(1)
+          PY
+
+      - name: Run tests (pytest)
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euxo pipefail
+          pytest -q | tee artifact_ci/logs/pytest.out
+        continue-on-error: true
+
+      - name: Upload artifacts (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-artifacts
+          path: artifact_ci
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Fail if pytest failed
+        if: always()
+        shell: bash
+        run: |
+          if [ -f artifact_ci/logs/pytest.out ] && \
+             grep -qE '==.* (FAILED|errors?=|failures=)[^=]*' artifact_ci/logs/pytest.out; then
+            echo "::error title=pytest failed::Found failures in pytest.out"
+            exit 1
+          fi
