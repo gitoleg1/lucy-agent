@@ -2,9 +2,6 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
 
 jobs:
   ci:
@@ -12,7 +9,9 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONFAULTHANDLER: "1"
-      PYTHONPATH: "src"
+      PYTHONPATH: src
+      SMOKE_ARTIFACT: smoke-artifacts
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,16 +25,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/logs artifacts/tmp
+          : > artifacts/logs/pytest.out || true
 
       - name: Install deps
         run: |
           set -euxo pipefail
           python -m venv .venv
           ./.venv/bin/python -m pip install --upgrade pip
-          # תלויות ריצה של האפליקציה
+          # תלוי בקובץ requirements של הפרויקט
           ./.venv/bin/python -m pip install -r requirements.txt
-          # תלויות בדיקות (pytest + לקוח בדיקות מבוסס Starlette/httpx)
-          ./.venv/bin/python -m pip install "pytest>=8.0,<9.0" httpx requests
+          # כלים לבדיקה
+          ./.venv/bin/python -m pip install pytest httpx requests starlette
+          # עקיפת הקריסה: greenlet גורם לסגפולט על ה־runner — מסירים
+          ./.venv/bin/python -m pip uninstall -y greenlet || true
+          # מוודאים שהוא באמת לא מותקן
+          ./.venv/bin/python - <<'PY'
+          import importlib, sys
+          m = importlib.util.find_spec("greenlet")
+          print("greenlet_present=", bool(m))
+          PY
 
       - name: Import sanity (src-layout)
         run: |
@@ -48,14 +56,25 @@ jobs:
           PY
 
       - name: Run tests (pytest)
+        id: pytest_run
+        continue-on-error: true  # נרצה להעלות ארטיפקטים גם אם נכשל
         run: |
-          set -euo pipefail
-          ./.venv/bin/python -m pytest -q -rA | tee artifacts/logs/pytest.out
+          set -euxo pipefail
+          ./.venv/bin/python -m pytest -q \
+            | tee artifacts/logs/pytest.out
+          echo "exit_code=$?" >> $GITHUB_OUTPUT
 
       - name: Upload artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-artifacts
+          name: ${{ env.SMOKE_ARTIFACT }}
           path: artifacts/**
           if-no-files-found: warn
+
+      # כישלול מכוון בסוף אם pytest נכשל
+      - name: Fail if pytest failed
+        if: steps.pytest_run.outputs.exit_code != '0'
+        run: |
+          echo "pytest failed (exit=${{ steps.pytest_run.outputs.exit_code }})"
+          exit 1
