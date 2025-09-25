@@ -21,3 +21,18 @@ main
 *.log
 .api.log*
 artifacts/
+.venv/
+__pycache__/
+.ruff_cache/
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual envs
+.venv/
+
+# Tool caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
