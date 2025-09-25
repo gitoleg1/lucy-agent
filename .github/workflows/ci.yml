@@ -2,17 +2,11 @@ name: CI
 
 on:
   push:
+  pull_request:
 
 jobs:
   ci:
     runs-on: ubuntu-24.04
-    env:
-      PYTHONUNBUFFERED: "1"
-      PYTHONFAULTHANDLER: "1"
-      PYTHONPATH: src
-      PYTHONNOUSERSITE: "1"   # למנוע זיהום מסביבת המשתמש
-      SMOKE_ARTIFACT: smoke-artifacts
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,59 +18,78 @@ jobs:
 
       - name: Prepare artifact dirs (always)
         run: |
-          set -euo pipefail
-          mkdir -p artifacts/logs artifacts/tmp
-          : > artifacts/logs/pip-install.out || true
-          : > artifacts/logs/pip-freeze.txt || true
-          : > artifacts/logs/pytest.out || true
-          python -V | tee artifacts/logs/python-version.txt
-          uname -a | tee artifacts/logs/uname.txt
+          set -euxo pipefail
+          mkdir -p logs
+
+      - name: Capture env & tool versions
+        run: |
+          set -euxo pipefail
+          {
+            echo "=== uname -a ==="
+            uname -a
+            echo "=== lsb_release -a ==="
+            lsb_release -a || true
+            echo "=== python -V ==="
+            python -V
+            echo "=== pip --version ==="
+            pip --version
+          } | tee logs/env.txt
 
       - name: Install deps (capture full pip logs)
         run: |
           set -euxo pipefail
-          python -m venv .venv
-          ./.venv/bin/python -m pip install --upgrade pip setuptools wheel
-          # נתקין עם עדיפות לבינארי ונאגור לוג מפורט לארטיפקטים
-          (.venv/bin/python -m pip install --prefer-binary -r requirements.txt -vvv) \
-            2>&1 | tee artifacts/logs/pip-install.out
-          # וידוא שאין greenlet
-          ./.venv/bin/python - <<'PY'
-          import importlib
-          print("greenlet_present=", bool(importlib.util.find_spec("greenlet")))
-          PY
-          # צילום מצב חבילות + בדיקת תאימות תלויות
-          ./.venv/bin/python -m pip freeze | tee artifacts/logs/pip-freeze.txt
-          ./.venv/bin/python -m pip check | tee -a artifacts/logs/pip-install.out
+          # שדרוג כלים בסיסיים
+          python -m pip install -U pip setuptools wheel > >(tee logs/pip-bootstrap.out) 2> >(tee logs/pip-bootstrap.err >&2)
+          # התקנת תלויות (stdout+stderr נשמרים)
+          python -m pip install -r requirements.txt -vvv > >(tee logs/pip-install.out) 2> >(tee logs/pip-install.err >&2)
+          # בדיקת קונפליקטים בין חבילות
+          python -m pip check | tee logs/pip-check.out
+          # צילום גרסאות של מודולים רלוונטיים
+          python - <<'PY' | tee logs/import-versions.txt
+import importlib
+mods = ["fastapi","starlette","pydantic","httpx","uvicorn","sqlalchemy"]
+for m in mods:
+    try:
+        mod = importlib.import_module(m)
+        v = getattr(mod, "__version__", "n/a")
+        print(f"{m}=={v}")
+    except Exception as e:
+        print(f"{m} IMPORT_ERROR: {e}")
+PY
+          # הקפאה מלאה (לשם דיבוג עתידי)
+          python -m pip freeze | tee logs/pip-freeze.txt
 
       - name: Import sanity (src-layout)
         run: |
-          set -euo pipefail
-          ./.venv/bin/python - <<'PY'
-          import importlib
-          m = importlib.import_module("lucy_agent.main")
-          assert hasattr(m, "app"), "lucy_agent.main חייב להכיל app של FastAPI"
-          print("import sanity: OK")
-          PY
+          set -euxo pipefail
+          export PYTHONPATH=src
+          python - <<'PY'
+import importlib
+mods = ["lucy_agent.api","lucy_agent.__init__","fastapi","starlette"]
+for m in mods:
+    try:
+        importlib.import_module(m)
+        print("OK:", m)
+    except Exception as e:
+        print("FAIL:", m, "->", e)
+        raise
+PY
+          echo "import sanity done" | tee -a logs/pytest.out
 
       - name: Run tests (pytest)
-        id: pytest_run
-        continue-on-error: true
         run: |
           set -euxo pipefail
-          ./.venv/bin/python -m pytest -q | tee artifacts/logs/pytest.out
-          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+          export PYTHONPATH=src
+          # לשמר את קוד היציאה של pytest למרות השימוש ב-tee
+          pytest -q -vv tests | tee logs/pytest.out
+          test ${PIPESTATUS[0]} -eq 0
 
       - name: Upload artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.SMOKE_ARTIFACT }}
-          path: artifacts/**
+          name: smoke-artifacts
+          path: |
+            logs/**
           if-no-files-found: warn
-
-      - name: Fail if pytest failed
-        if: steps.pytest_run.outputs.exit_code != '0'
-        run: |
-          echo "pytest failed (exit=${{ steps.pytest_run.outputs.exit_code }})"
-          exit 1
+          retention-days: 7
