@@ -1,9 +1,11 @@
-fastapi==0.117.1
-uvicorn==0.36.0
-pydantic==2.11.9
-SQLAlchemy==2.0.43
+# אפליקציה
+fastapi>=0.110,<0.116
+pydantic>=2.6,<3
+SQLAlchemy>=2.0.20,<2.1
 
-# בדיקות וקליינט
-starlette==0.48.0
-httpx==0.27.2
-pytest==8.3.3
+# שרות פיתוח (לא חובה ל־CI אבל לא מזיק)
+uvicorn>=0.30,<0.37
+
+# בדיקות/קליינט
+httpx>=0.25,<0.28
+pytest>=8,<9
