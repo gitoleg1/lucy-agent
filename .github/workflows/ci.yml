@@ -14,7 +14,7 @@ jobs:
       HOST: 127.0.0.1
       PORT: "8000"
       SMOKE_ARTIFACT: smoke-artifacts
-
+      PYTHONFAULTHANDLER: "1"   # דאמפים במקרה של SIGSEGV
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,16 +41,35 @@ jobs:
           mkdir -p artifacts/json artifacts/logs
           : > /tmp/api.out || true
 
-      - name: Install deps (robust)
+      - name: Install deps (robust + pin greenlet)
         shell: bash
         run: |
           set -euxo pipefail
           python -m venv .venv
           ./.venv/bin/python -m pip install --upgrade pip
-          # דרישות הפרויקט (אם ריק/לא קיים לא מפילים את ה-CI)
+          # דרישות הפרויקט (אם אין קובץ/ריק לא מפילים את ה-CI)
           ( [ -f requirements.txt ] && ./.venv/bin/python -m pip install -r requirements.txt ) || true
-          # מבטיחים FastAPI + Uvicorn זמינים
+          # עקיפת segfault: מצמידים חבילות רגישות לגלגלי C
+          ./.venv/bin/python -m pip install "greenlet==3.0.3" "sqlalchemy==2.0.43"
+          # בסיס לריצה
           ./.venv/bin/python -m pip install fastapi uvicorn
+
+      - name: Env diagnostics (frozen)
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "python: $(./.venv/bin/python -V)"
+            echo "uname: $(uname -a)"
+            echo "pip location: $(./.venv/bin/python -c 'import sys,site;print(site.getsitepackages())')"
+            echo "greenlet: $(./.venv/bin/python - <<'PY'
+import greenlet, platform
+print("ver", greenlet.__version__, "plat", platform.platform())
+PY
+)"
+            echo "freeze:"
+            ./.venv/bin/python -m pip freeze
+          } > artifacts/logs/env.txt
 
       - name: Import sanity (src-layout)
         shell: bash
@@ -59,11 +78,11 @@ jobs:
         run: |
           set -euo pipefail
           ./.venv/bin/python - <<'PY'
-          import importlib
-          m = importlib.import_module("lucy_agent.main")
-          assert hasattr(m, "app"), "lucy_agent.main חייב להכיל app של FastAPI"
-          print("import sanity: OK")
-          PY
+import importlib
+m = importlib.import_module("lucy_agent.main")
+assert hasattr(m, "app"), "lucy_agent.main חייב להכיל app של FastAPI"
+print("import sanity: OK")
+PY
 
       - name: Boot API (background) + wait for /health
         shell: bash
@@ -71,8 +90,8 @@ jobs:
           PYTHONPATH: src
         run: |
           set -euxo pipefail
-          # הפעלה ברקע דרך המודול של uvicorn מתוך ה-venv
-          ./.venv/bin/python -m uvicorn --app-dir src "${APP_MODULE}" \
+          # הפעלה ברקע עם faulthandler כדי לקבל דמפ אם תהיה קריסה
+          ./.venv/bin/python -X faulthandler -m uvicorn --app-dir src "${APP_MODULE}" \
             --host "${HOST}" --port "${PORT}" > /tmp/api.out 2>&1 &
           echo $! > /tmp/api.pid
 
@@ -89,14 +108,6 @@ jobs:
           echo "==== tail /tmp/api.out ====" >&2
           tail -n 200 /tmp/api.out >&2 || true
           exit 1
-
-      - name: Run smoke v11 (auto health-only fallback)
-        shell: bash
-        run: |
-          set -euo pipefail
-          # כרגע רק בדיקת בריאות בסיסית; אפשר להרחיב כאן בהמשך
-          curl -fsS "http://${HOST}:${PORT}/health" | tee artifacts/logs/smoke.log
-          echo "smoke: OK"
 
       - name: Stop API (best-effort)
         if: always()
@@ -124,7 +135,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.SMOKE_ARTIFACT }}
-          if-no-files-found: warn
           path: |
             artifacts/**
             /tmp/api.out
+          if-no-files-found: warn
