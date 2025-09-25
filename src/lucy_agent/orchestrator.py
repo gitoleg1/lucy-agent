@@ -1,14 +1,15 @@
 from __future__ import annotations
+
 import asyncio
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Any, Dict
 
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from .db import SessionLocal
-from .models import Task as TaskORM, EventLog, RunStatus
+from .models import EventLog, RunStatus, Task as TaskORM
 
 UTC = timezone.utc
 

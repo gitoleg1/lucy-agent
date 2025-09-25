@@ -773,4 +773,3 @@ def agent_shell(request: Request, payload: AgentShellIn, request: Request):
     ))
 # ========= סוף Lucy Autopilot (Guardrails v1) =========
 # <<< LUCY_AUTOPILOT_QUICK_RUN_END
-

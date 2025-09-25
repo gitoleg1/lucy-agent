@@ -1,5 +1,6 @@
-import aiosqlite
 import os
+
+import aiosqlite
 
 DB_PATH = os.getenv("LUCY_AGENT_DB", "lucy_agent.db")
 

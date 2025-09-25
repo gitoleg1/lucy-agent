@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-import os
 import json
-import time
-import subprocess
-from uuid import uuid4
+import os
 from pathlib import Path
+import subprocess
+import time
 from typing import Any, Dict, List, Literal, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.inspection import inspect as sa_inspect
 
 from ..db.session import get_session
 from ..models.tasks import (
-    Task,
     Action,
-    Run,
     Approval,
     AuditLog,
+    Run,
+    Task,
     TaskStatus,
     now_iso,
 )
@@ -720,9 +720,9 @@ def quick_run(payload: QuickRunIn, request: Request):
 
         if not acts:
             if hasattr(t, "status"):
-                setattr(t, "status", "SUCCEEDED")
+                t.status = "SUCCEEDED"
             if hasattr(t, "updated_at"):
-                setattr(t, "updated_at", now_iso())
+                t.updated_at = now_iso()
             safe_commit(s)
         else:
             preexec = _resource_limiter()
@@ -883,17 +883,9 @@ def quick_run(payload: QuickRunIn, request: Request):
             with get_session() as s2:
                 t_db2 = s2.scalar(select(Task).where(Task.id == getattr(t, "id", None)))
                 if t_db2 and hasattr(t_db2, "status"):
-                    setattr(
-                        t_db2,
-                        "status",
-                        (
-                            "FAILED"
-                            if any(getattr(ro, "status", None) == "FAILED" for ro in run_results)
-                            else "SUCCEEDED"
-                        ),
-                    )
+                    t_db2.status = "FAILED" if any(getattr(ro, "status", None) == "FAILED" for ro in run_results) else "SUCCEEDED"
                 if t_db2 and hasattr(t_db2, "updated_at"):
-                    setattr(t_db2, "updated_at", now_iso())
+                    t_db2.updated_at = now_iso()
                 safe_commit(s2)
 
     # 4) Audit לפי created_at + המרת data ל-dict (ונשמר ה-fallback הסינתטי אם חסר end)
