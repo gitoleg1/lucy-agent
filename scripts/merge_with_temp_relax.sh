@@ -1,163 +1,119 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
-# ------------------------------------------------------------
 # merge_with_temp_relax.sh
-# מיזוג PR עם "הקלה זמנית" על הגנות הסניף ואז החזרתן להגדרות המחמירות.
-# עובד עם GitHub CLI (gh) ומדווח לוגים ברורים.
-# ------------------------------------------------------------
+# מבצע:
+# 1) גיבוי קונפיג הגנות הסניף main
+# 2) הקלה זמנית (אפס אישורים, ללא CODEOWNERS; משאיר CI חובה)
+# 3) מיזוג PR בצורה מבוקרת (ברירת מחדל --squash --delete-branch)
+#    תומך בדגל --auto (מיזוג אוטומטי כשכל הדרישות מתמלאות)
+#    ותומך בדגל --admin (מיזוג בהרשאת מנהל — עוקף אישורים)
+# 4) החזרת ההגנות למחמירות
+#
+# שימוש:
+#   ./scripts/merge_with_temp_relax.sh -p <PR_NUMBER> [--auto] [--admin]
+#
+# הערה: אם אין בודקים זמינים לאישור, מומלץ להשתמש ב־--admin (אם יש לך הרשאות מנהל).
 
-OWNER=""
-REPO=""
-PR=""
-KEEP_CI=1                    # במצב הקלה – להשאיר בדיקת CI (ברירת מחדל: כן)
-MERGE_METHOD="--squash"      # אפשר --merge או --rebase
-DELETE_BRANCH="--delete-branch"
+REPO="${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
+PR_NUMBER=""
+MERGE_FLAGS=(--squash --delete-branch)
+AUTO_MERGE="false"
+ADMIN_MERGE="false"
 
-usage() {
-  cat <<'EOF'
-שימוש:
-  ./merge_with_temp_relax.sh -p <PR_NUMBER> [-o <owner>] [-r <repo>] [--no-keep-ci] [--merge|--rebase] [--no-delete-branch]
-
-דגלים:
-  -p, --pr               מספר ה-PR (חובה)
-  -o, --owner            בעל הריפו (ברירת מחדל: זיהוי אוטומטי מה-remote)
-  -r, --repo             שם הריפו (ברירת מחדל: זיהוי אוטומטי מה-remote)
-      --no-keep-ci       בהקלה – להסיר גם את דרישת ה-CI (לא מומלץ)
-      --merge            מיזוג merge-commit במקום squash
-      --rebase           מיזוג rebase במקום squash
-      --no-delete-branch לא למחוק את סניף ה-PR לאחר המיזוג
-  -h, --help             עזרה
-EOF
-}
-
-# ---------- ניתוח ארגומנטים ----------
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -p|--pr) PR="${2:-}"; shift 2;;
-    -o|--owner) OWNER="${2:-}"; shift 2;;
-    -r|--repo) REPO="${2:-}"; shift 2;;
-    --no-keep-ci) KEEP_CI=0; shift;;
-    --merge) MERGE_METHOD="--merge"; shift;;
-    --rebase) MERGE_METHOD="--rebase"; shift;;
-    --no-delete-branch) DELETE_BRANCH=""; shift;;
-    -h|--help) usage; exit 0;;
-    *) echo "❌ ארגומנט לא מוכר: $1"; usage; exit 2;;
+    -p|--pr)
+      PR_NUMBER="$2"; shift 2 ;;
+    --auto)
+      AUTO_MERGE="true"; shift ;;
+    --admin)
+      ADMIN_MERGE="true"; shift ;;
+    *)
+      echo "Unknown arg: $1" >&2; exit 2 ;;
   esac
 done
 
-if [[ -z "${PR:-}" ]]; then
-  echo "❌ שגיאה: חובה לציין מספר PR עם ‎-p‎/‎--pr‎"
-  usage
+if [[ -z "${PR_NUMBER}" ]]; then
+  echo "Usage: $0 -p <PR_NUMBER> [--auto] [--admin]" >&2
   exit 2
 fi
 
-# ---------- זיהוי owner/repo מה-remote במקרה ולא נמסרו ----------
-if [[ -z "${OWNER:-}" || -z "${REPO:-}" ]]; then
-  if ! remote_url=$(git remote get-url origin 2>/dev/null); then
-    echo "❌ לא ניתן לזהות remote 'origin' (האם זה ריפו git תקין?)"
-    exit 2
-  fi
-  if [[ "$remote_url" =~ github\.com[:/]+([^/]+)/([^/.]+)(\.git)?$ ]]; then
-    OWNER="${OWNER:-${BASH_REMATCH[1]}}"
-    REPO="${REPO:-${BASH_REMATCH[2]}}"
-  else
-    echo "❌ לא הצלחתי לפרש owner/repo מתוך ה-remote: $remote_url"
-    exit 2
-  fi
-fi
+echo "ℹ️  ריפו: ${REPO} | PR: #${PR_NUMBER}"
+echo "ℹ️  שיטת מיזוג: ${MERGE_FLAGS[*]} | --auto=${AUTO_MERGE} | --admin=${ADMIN_MERGE}"
 
-echo "ℹ️  ריפו: $OWNER/$REPO | PR: #$PR"
-echo "ℹ️  שיטת מיזוג: $MERGE_METHOD | מחיקת סניף אחרי מיזוג: ${DELETE_BRANCH:-לא}"
+TMP_BACKUP="/tmp/protection.$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 4).json"
 
-# ---------- ולידציה של gh ----------
-if ! gh auth status >/dev/null 2>&1; then
-  echo "❌ GitHub CLI (gh) לא מחובר. הרץ: gh auth login"
-  exit 1
-fi
+# גיבוי מצב נוכחי
+echo "📥 מגבה קונפיג הגנת הסניף הנוכחי ל-${TMP_BACKUP}..."
+gh api \
+  -H "Accept: application/vnd.github+json" \
+  "repos/${REPO}/branches/main/protection" > "${TMP_BACKUP}"
 
-# ---------- גיבוי קונפיג הגנות נוכחי (לא חובה לשחזור, אבל שימושי ללוגים) ----------
-PROT_BACKUP="$(mktemp /tmp/protection.XXXX.json)"
-echo "📥 מגבה קונפיג הגנת הסניף הנוכחי ל-$PROT_BACKUP (לוג/מידע)..."
-gh api "/repos/$OWNER/$REPO/branches/main/protection" > "$PROT_BACKUP" 2>/dev/null || true
-
-# ---------- הקלה זמנית בהגנת main ----------
+# הקלה זמנית: מבטלים אישורים ו-CODEOWNERS, משאירים CI חובה (strict)
 echo "🛠️  מפעיל הקלה זמנית על הגנת main..."
-if [[ $KEEP_CI -eq 1 ]]; then
-  CHECKS='"checks":[{"context":"CI"}]'
-  echo "   • נשמרת דרישת CI בזמן ההקלה."
-else
-  CHECKS='"checks":[]'
-  echo "   • הסרת דרישת CI בזמן ההקלה (לא מומלץ)."
-fi
+gh api --method PUT \
+  -H "Accept: application/vnd.github+json" \
+  "repos/${REPO}/branches/main/protection" \
+  -f required_status_checks.strict=true \
+  -f required_status_checks.contexts[]=CI \
+  -F enforce_admins.enabled=true \
+  -F required_pull_request_reviews.dismiss_stale_reviews=true \
+  -F required_pull_request_reviews.require_code_owner_reviews=false \
+  -F required_pull_request_reviews.required_approving_review_count=0 \
+  -F restrictions="null" >/dev/null
 
-RELAX_JSON=$(cat <<EOF
-{
-  "required_status_checks": { "strict": true, $CHECKS },
-  "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "dismiss_stale_reviews": true,
-    "required_approving_review_count": 0,
-    "require_code_owner_reviews": false
-  },
-  "restrictions": null,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "required_linear_history": false
-}
-EOF
-)
-
-echo "$RELAX_JSON" | gh api -X PUT -H "Accept: application/vnd.github+json" \
-  "/repos/$OWNER/$REPO/branches/main/protection" --input -
-
-# ---------- מיזוג ה-PR ----------
-echo "🔀 מבצע מיזוג של PR #$PR ..."
+# מיזוג
+echo "🔀 מנסה למזג את PR #${PR_NUMBER} ..."
 set +e
-if [[ -n "$DELETE_BRANCH" ]]; then
-  gh pr merge "$PR" "$MERGE_METHOD" "$DELETE_BRANCH" --repo "$OWNER/$REPO"
+if [[ "${ADMIN_MERGE}" == "true" ]]; then
+  gh pr merge "${PR_NUMBER}" "${MERGE_FLAGS[@]}" --admin
+  MERGE_RC=$?
+elif [[ "${AUTO_MERGE}" == "true" ]]; then
+  gh pr merge "${PR_NUMBER}" "${MERGE_FLAGS[@]}" --auto
   MERGE_RC=$?
 else
-  gh pr merge "$PR" "$MERGE_METHOD" --repo "$OWNER/$REPO"
+  gh pr merge "${PR_NUMBER}" "${MERGE_FLAGS[@]}"
   MERGE_RC=$?
 fi
 set -e
 
-# ---------- החזרת ההגנות למחמירות ----------
+# החזרת הגנות
 echo "🛡️  מחזיר הגנות סניף להגדרות המחמירות..."
-STRICT_JSON=$(cat <<'EOF'
-{
-  "required_status_checks": { "strict": true, "checks": [ { "context": "CI" } ] },
-  "enforce_admins": true,
-  "required_pull_request_reviews": {
-    "dismiss_stale_reviews": true,
-    "required_approving_review_count": 1,
-    "require_code_owner_reviews": true
-  },
-  "restrictions": null,
-  "allow_force_pushes": false,
-  "allow_deletions": false,
-  "required_linear_history": false
-}
-EOF
-)
+# קורא בחזרה מהגיבוי — ומחיל כפי שהיה
+strict=$(jq -r '.required_status_checks.strict' "${TMP_BACKUP}")
+checks=$(jq -r '.required_status_checks.checks[].context' "${TMP_BACKUP}" 2>/dev/null || true)
+require_co=$(jq -r '.required_pull_request_reviews.require_code_owner_reviews' "${TMP_BACKUP}")
+approvals=$(jq -r '.required_pull_request_reviews.required_approving_review_count' "${TMP_BACKUP}")
 
-echo "$STRICT_JSON" | gh api -X PUT -H "Accept: application/vnd.github+json" \
-  "/repos/$OWNER/$REPO/branches/main/protection" --input -
-
-# ---------- וידוא סטטוס מיזוג + הצגת קונפיג הגנות ----------
-echo "🔎 בדיקת סטטוס ה-PR וקונפיג ההגנות לאחר הפעולה:"
-gh pr view "$PR" --json state,mergedAt,mergeCommit --jq '{state,mergedAt,mergeCommit:(.mergeCommit|try .oid)}' --repo "$OWNER/$REPO" || true
-gh api "/repos/$OWNER/$REPO/branches/main/protection" --jq \
-'{strict:.required_status_checks.strict,
-  checks:[.required_status_checks.checks[].context],
-  require_code_owner_reviews:.required_pull_request_reviews.require_code_owner_reviews,
-  required_approving_review_count:.required_pull_request_reviews.required_approving_review_count}'
-
-# ---------- תוצאת ריצה ----------
-if [[ "$MERGE_RC" -ne 0 ]]; then
-  echo "❌ המיזוג נכשל (קוד=$MERGE_RC). ההגנות כבר הוחזרו למחמירות."
-  exit "$MERGE_RC"
+args=( -f "required_status_checks.strict=${strict}" )
+if [[ -n "${checks}" ]]; then
+  while read -r c; do
+    [[ -n "$c" ]] && args+=( -f "required_status_checks.checks[][].context=${c}" )
+  done < <(printf '%s\n' "${checks}")
 else
-  echo "✅ ה-PR מוזג וההגנות הוחזרו למחמירות. סיום ✔"
+  args+=( -f "required_status_checks.checks[][].context=CI" )
 fi
+
+args+=( -F "enforce_admins.enabled=true" )
+args+=( -F "required_pull_request_reviews.require_code_owner_reviews=${require_co}" )
+args+=( -F "required_pull_request_reviews.required_approving_review_count=${approvals}" )
+args+=( -F "restrictions=null" )
+
+gh api --method PUT \
+  -H "Accept: application/vnd.github+json" \
+  "repos/${REPO}/branches/main/protection" \
+  "${args[@]}" >/dev/null || true
+
+# סטטוס סופי
+echo "🔎 בדיקת סטטוס ה-PR וקונפיג ההגנות לאחר הפעולה:"
+gh pr view "${PR_NUMBER}" --json state,mergedAt,mergeCommit | jq '{state,mergedAt,mergeCommit:(.mergeCommit|try .oid)}' || true
+gh api -H "Accept: application/vnd.github+json" "repos/${REPO}/branches/main/protection" \
+  | jq '{strict:.required_status_checks.strict, checks:[.required_status_checks.checks[].context], require_code_owner_reviews:.required_pull_request_reviews.require_code_owner_reviews, required_approving_review_count:.required_pull_request_reviews.required_approving_review_count}' || true
+
+if [[ "${MERGE_RC}" -ne 0 ]]; then
+  echo "❌ המיזוג נכשל (קוד=${MERGE_RC}). ההגנות הוחזרו."
+  exit "${MERGE_RC}"
+fi
+
+echo "✅ ה-PR מוזג בהצלחה."
