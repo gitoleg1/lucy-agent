@@ -47,3 +47,6 @@ Thumbs.db
 # Caches
 .cache/
 pip-wheel-metadata/
+.venv/
+__pycache__/
+*.py[cod]
