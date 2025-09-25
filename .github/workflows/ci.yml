@@ -33,8 +33,8 @@ jobs:
           . .venv/bin/activate
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # כלי טסטים
-          pip install pytest
+          # תלות לטסטים (TestClient של Starlette/FASTAPI משתמש ב-httpx; גרסאות ישנות יותר ב-requests)
+          pip install pytest httpx requests
 
       - name: Run pytest
         shell: bash
@@ -50,5 +50,4 @@ jobs:
           name: smoke-artifacts
           path: |
             .pytest_cache
-            artifacts/**
           if-no-files-found: warn
