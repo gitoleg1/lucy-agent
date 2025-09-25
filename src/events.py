@@ -1,13 +1,15 @@
 from __future__ import annotations
+
+import asyncio
+import datetime as dt
+import json
+import re
+import time
+from typing import Any, AsyncIterator, Dict, Optional
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import AsyncIterator, Dict, Any, Optional
-import asyncio
-import json
-import time
-import re
-import datetime as dt
 
 router = APIRouter(prefix="/stream", tags=["stream"])
 

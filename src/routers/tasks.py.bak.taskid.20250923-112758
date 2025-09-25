@@ -620,4 +620,3 @@ def agent_shell(payload: AgentShellIn):
     ))
 # ========= סוף Lucy Autopilot (MVP, idx + params_json) =========
 # <<< LUCY_AUTOPILOT_QUICK_RUN_END
-

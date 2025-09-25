@@ -1,17 +1,31 @@
-from .routers.tasks import router as tasks_router
+from __future__ import annotations
+
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
 
-# === בריאות בסיסית ===
-app = FastAPI(title="Lucy Agent API", version="0.1.0")
+# Router קיים של המשימות (כבר בשימוש אצלך)
+from routers.tasks import router as tasks_router  # type: ignore
 
-
-@app.get("/health", summary="Health")
-def health():
-    return JSONResponse({"status": "ok"})
+# כאן אנחנו מוסיפים גם את ה-Router של האירועים/אוטופיילוט שבו יושבים /quick-run ו-/agent/shell
+from lucy_agent.routers import events as events_router
 
 
-# === Routers ===
-# חשוב: זה ה־router שמגדיר /tasks עם actions (לא steps)
+def create_app() -> FastAPI:
+    app = FastAPI(title="Lucy Agent API", version="0.1.0")
 
-app.include_router(tasks_router)
+    # בריאות/גרסה בסיסיים (נשארים כפי שהיו)
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/version")
+    def version() -> dict[str, str]:
+        return {"version": "0.1.0"}
+
+    # Include routers
+    app.include_router(events_router.router)  # ← כאן נכנסים /quick-run ו-/agent/shell
+    app.include_router(tasks_router)
+
+    return app
+
+
+app = create_app()

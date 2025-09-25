@@ -1,10 +1,18 @@
-import os
-import asyncio
-import json
+# ruff: noqa: E501
+from __future__ import annotations
+
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, status, Request
-from fastapi.responses import StreamingResponse, JSONResponse, Response
-from ..security import require_api_key
+import json
+import os
+import shlex
+import subprocess
+import time
+from typing import Any, Dict
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
+
+from lucy_agent.security import require_api_key
 
 router = APIRouter()
 
@@ -15,119 +23,77 @@ VERSION = "0.1.0"
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _sse_event(event: str | None, data: dict | str, *, event_id: int | None = None) -> bytes:
-    """
-    SSE תקין:
-      id: <int>\n
-      event: <name>\n
-      data: <json/text>\n
-      \n
-    """
-    payload = data if isinstance(data, str) else json.dumps(data, ensure_ascii=False)
-    lines: list[str] = []
-    if event_id is not None:
-        lines.append(f"id: {event_id}")
-    if event:
-        lines.append(f"event: {event}")
-    for ln in payload.splitlines() or [""]:
-        lines.append(f"data: {ln}")
-    lines.append("")
-    return ("\n".join(lines) + "\n").encode("utf-8")
+def _sse(event: str | None, data: dict | str) -> bytes:
+    payload = "" if data is None else json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    out = f"event: {event}\n"
+    out += f"data: {payload}\n\n"
+    return out.encode("utf-8")
 
 
-def _pick_cors_origin(request: Request) -> str | None:
-    """
-    בוחר Origin להחזרת Access-Control-Allow-Origin אם מותר.
-    """
-    origin = request.headers.get("origin")
-    if not origin:
-        return None
-    if not ALLOWED_ORIGINS:
-        return origin
-    if origin in ALLOWED_ORIGINS:
-        return origin
-    return None
+async def _sleep_or_disconnect(request: Request, seconds: float) -> None:
+    steps = max(1, int(seconds * 10))
+    for _ in range(steps):
+        if await request.is_disconnected():
+            return
+        time.sleep(0.1)
 
 
 @router.get("/stream/tasks/{task_id}")
 async def stream_task(task_id: str, request: Request, _: bool = Depends(require_api_key)):
-    """
-    זרם SSE: started → heartbeat×3 → done
-    - 'retry: 3000' בתחילת הזרם.
-    - כל אירוע כולל: id/ts/seq/task_id.
-    - כותרות CORS ל-SSE לפי Origin.
-    """
-
+    """זרם SSE דמו: started → heartbeat×3 → done"""
     async def gen():
-        yield b"retry: 3000\n\n"
+        yield _sse("started", {"task_id": task_id, "ts": now_iso(), "payload": {"status": "RUNNING"}})
+        for _ in range(3):
+            await _sleep_or_disconnect(request, HEARTBEAT_INTERVAL)
+            yield _sse("heartbeat", {"task_id": task_id, "ts": now_iso(), "payload": {"ok": True}})
+        yield _sse("done", {"task_id": task_id, "ts": now_iso(), "payload": {"status": "SUCCEEDED"}})
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
-        eid = 1
-        yield _sse_event(
-            "started",
-            {
-                "event": "started",
-                "ts": now_iso(),
-                "task_id": task_id,
-                "seq": 0,
-                "status": "STARTED",
-            },
-            event_id=eid,
-        )
-        eid += 1
 
-        for i in range(1, 4):
-            await asyncio.sleep(HEARTBEAT_INTERVAL)
-            yield _sse_event(
-                "heartbeat",
-                {"event": "heartbeat", "ts": now_iso(), "task_id": task_id, "seq": i},
-                event_id=eid,
-            )
-            eid += 1
+def _run_cmd(cmd: str, timeout_sec: int = 30) -> Dict[str, Any]:
+    """מריץ פקודה אחת ב־shell ומחזיר סטטוס/קוד/פלטים (חיתוך ל־2000 תווים)."""
+    shell = os.environ.get("SHELL") or "/bin/sh"
+    full = f"{shell} -lc {shlex.quote(cmd)}"
+    try:
+        res = subprocess.run(full, shell=True, capture_output=True, text=True, timeout=timeout_sec)  # nosec
+        exit_code = int(res.returncode)
+        status_str = "SUCCEEDED" if exit_code == 0 else "FAILED"
+        return {
+            "status": status_str,
+            "exit_code": exit_code,
+            "stdout": (res.stdout or "")[:2000],
+            "stderr": (res.stderr or "")[:2000],
+        }
+    except subprocess.TimeoutExpired:
+        return {"status": "FAILED", "exit_code": 124, "stdout": "", "stderr": f"timeout({timeout_sec}s)"}
+    except Exception as e:
+        return {"status": "FAILED", "exit_code": -1, "stdout": "", "stderr": f"{type(e).__name__}: {e}"}
 
-        yield _sse_event(
-            "done",
-            {
-                "event": "done",
-                "ts": now_iso(),
-                "task_id": task_id,
-                "seq": 9999,
-                "status": "SUCCEEDED",
-            },
-            event_id=eid,
-        )
 
-    headers = {
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
+@router.post("/quick-run")
+def quick_run(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:  # noqa: B008
+    """
+    MVP Quick-Run: קלט {"cmd": "<shell>"} → פלט task/runs/audit.
+    """
+    cmd = str(payload.get("cmd") or "").strip()
+    if not cmd:
+        return {"task": {"status": "FAILED", "error": "missing 'cmd'"}, "runs": [], "audit": {"events": []}}
+    result = _run_cmd(cmd)
+    return {
+        "task": {"status": result["status"], "title": payload.get("title") or "quick-run"},
+        "runs": [{"idx": 1, "type": "shell", "exit_code": result["exit_code"],
+                  "stdout_tail": result["stdout"], "stderr_tail": result["stderr"]}],
+        "audit": {"events": [{"type": "shell", "ts": now_iso(), "cmd": cmd}]},
     }
 
-    origin = _pick_cors_origin(request)
-    if origin:
-        headers["Access-Control-Allow-Origin"] = origin
-        headers["Vary"] = "Origin"
 
-    return StreamingResponse(gen(), media_type="text/event-stream", headers=headers)
-
-
-@router.get("/auth/check")
-async def auth_check(_: bool = Depends(require_api_key)):
-    """
-    בדיקת מפתח: 204 אם תקין, 401/503 מטופלים ב-dependency.
-    """
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-@router.get("/health")
-async def health():
-    return JSONResponse({"status": "ok"}, status_code=status.HTTP_200_OK)
-
-
-@router.get("/version")
-async def version():
-    return JSONResponse(
-        {"version": VERSION, "started_at": STARTED_AT}, status_code=status.HTTP_200_OK
-    )
+@router.post("/agent/shell")
+def agent_shell(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:  # noqa: B008
+    """מעטפת דקה סביב quick-run: גוף {"cmd":"..."}; פלט status/exit_code/stdout/stderr."""
+    cmd = str(payload.get("cmd") or "").strip()
+    if not cmd:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="missing 'cmd'")
+    return _run_cmd(cmd)

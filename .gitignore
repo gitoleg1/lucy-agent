@@ -1,23 +1,52 @@
-# Python
+# ---------------- Python ----------------
 __pycache__/
 *.py[cod]
-*.pyo
+*.pyd
+*.so
 
-# Local artifacts / logs
-artifact/
-artifact_ci/
-logs/
-*.log
-
-# venvs
+# Virtual Envs
 .venv/
 venv/
+.env/
+.envrc
+.python-version
 
-# misc
-main
-*.swp
-# logs & temp
-*.bak
-*.log
-.api.log*
-artifacts/
+# Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+
+# Coverage / testing
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# IDE / Editors
+.vscode/
+.idea/
+*.iml
+
+# OS / misc
+.DS_Store
+Thumbs.db
+
+# Environments & secrets (keep out of VCS)
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Caches
+.cache/
+pip-wheel-metadata/
+.venv/
+__pycache__/
+*.py[cod]

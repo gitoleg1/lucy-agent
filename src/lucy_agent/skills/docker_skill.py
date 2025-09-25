@@ -1,8 +1,10 @@
 from __future__ import annotations
-from typing import List, Dict, Any
-import docker
-import subprocess
+
 import shlex
+import subprocess
+from typing import Any, Dict, List
+
+import docker
 
 
 class DockerSkill:

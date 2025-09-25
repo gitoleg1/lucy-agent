@@ -1,5 +1,6 @@
 import os
-from fastapi import Header, HTTPException, Depends, Request, status
+
+from fastapi import Depends, Header, HTTPException, Request, status
 
 API_KEY_ENV = "AGENT_API_KEY"
 
