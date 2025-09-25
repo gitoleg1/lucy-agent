@@ -2,8 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
   pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+  packages: read
+  metadata: read
 
 env:
   PYTHONUNBUFFERED: "1"
@@ -40,6 +46,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/json artifacts/logs artifacts/tmp
           : > /tmp/api.out || true
+          : > /tmp/api_control.out || true
 
       - name: Install deps
         shell: bash
@@ -48,13 +55,11 @@ jobs:
           python -m venv .venv
           ./.venv/bin/python -m pip install --upgrade pip
           ./.venv/bin/python -m pip install -r requirements.txt
-          # ביטוח: מוודאים ש-fastapi+uvicorn אכן מותקנים
+          # ביטוח: ודאו ש-fastapi+uvicorn מותקנים
           ./.venv/bin/python -m pip install fastapi uvicorn
 
       - name: Import sanity (src-layout)
         shell: bash
-        env:
-          PYTHONPATH: src
         run: |
           set -euo pipefail
           ./.venv/bin/python - <<'PY'
@@ -64,17 +69,76 @@ jobs:
           print("import sanity: OK")
           PY
 
-      - name: Boot API (background) + wait for /health
+      # דיאגנוסטיקה: אינפו סביבה + pip freeze
+      - name: Diagnostics — env info & pip freeze
         shell: bash
-        env:
-          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          python --version | tee artifacts/logs/python-version.txt
+          uname -a | tee artifacts/logs/uname.txt
+          ./.venv/bin/python - <<'PY' | tee artifacts/logs/py-pkgs.txt
+          import sys, platform
+          print("py:", sys.version)
+          print("platform:", platform.platform())
+          try:
+              import fastapi, starlette, uvicorn
+              print("fastapi:", fastapi.__version__)
+              print("starlette:", starlette.__version__)
+              print("uvicorn:", uvicorn.__version__)
+          except Exception as e:
+              print("pkg import error:", e)
+          try:
+              import greenlet
+              print("greenlet:", greenlet.__version__)
+          except Exception as e:
+              print("greenlet: not installed", e)
+          PY
+          ./.venv/bin/python -m pip freeze | tee artifacts/logs/pip-freeze.txt
+
+      # ניסיון הרצה "בקרתית" לאיסוף לוגים בלבד (לא מפיל job אם נכשל)
+      - name: Control run — run uvicorn (allow fail, capture logs)
+        shell: bash
+        continue-on-error: true
         run: |
           set -euxo pipefail
-          # מריצים uvicorn עם asyncio ולא uvloop כדי לעקוף את הקריסה
+          ( ./.venv/bin/python -m uvicorn --app-dir src "${APP_MODULE}" \
+              --host "${HOST}" --port "${PORT}" \
+              --loop asyncio --http h11 \
+              --no-access-log --log-level debug > /tmp/api_control.out 2>&1 ) || true
+          # מחכים רגע קצר כדי לאסוף פלט, ואז מכניסים לארטיפקטים
+          sleep 1 || true
+          cp -f /tmp/api_control.out artifacts/tmp/api_control.out 2>/dev/null || true
+
+      # HOTFIX ממוקד (מגובה בלוגים): הסרת greenlet ונעיצת uvicorn יציב
+      - name: Hotfix deps for CI (avoid segfaults on runner)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ./.venv/bin/python -m pip uninstall -y greenlet || true
+          ./.venv/bin/python -m pip install "uvicorn==0.30.6"
+          ./.venv/bin/python - <<'PY'
+          import sys, platform
+          import fastapi, starlette, uvicorn
+          print("py:", sys.version)
+          print("platform:", platform.platform())
+          print("fastapi:", fastapi.__version__)
+          print("starlette:", starlette.__version__)
+          print("uvicorn:", uvicorn.__version__)
+          try:
+              import greenlet
+              print("greenlet still present:", greenlet.__version__)
+          except Exception:
+              print("greenlet: not installed (ok)")
+          PY
+
+      - name: Boot API (background) + wait for /health
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # מריצים uvicorn עם asyncio + h11 בלבד
           ./.venv/bin/python -m uvicorn --app-dir src "${APP_MODULE}" \
             --host "${HOST}" --port "${PORT}" \
             --loop asyncio --http h11 > /tmp/api.out 2>&1 &
-
           echo $! > /tmp/api.pid
 
           for i in $(seq 1 40); do
@@ -115,11 +179,12 @@ jobs:
         run: |
           set -euo pipefail
           cp -f /tmp/api.out artifacts/tmp/api.out 2>/dev/null || true
+          cp -f /tmp/api_control.out artifacts/tmp/api_control.out 2>/dev/null || true
 
       - name: Upload smoke artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.SMOKE_ARTIFACT }}
-          path: |
-            artifacts/**
+          path: artifacts/**
+          if-no-files-found: warn
