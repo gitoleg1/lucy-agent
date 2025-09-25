@@ -38,28 +38,28 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p artifacts/json artifacts/logs artifacts/tmp
+          mkdir -p artifacts/json artifacts/logs
           : > /tmp/api.out || true
 
-      - name: Install deps (venv) + expose VENV_PY to later steps
+      - name: Install deps (robust)
         shell: bash
         run: |
           set -euxo pipefail
           python -m venv .venv
           ./.venv/bin/python -m pip install --upgrade pip
+          # דרישות הפרויקט (אם ריק/לא קיים לא מפילים את ה-CI)
           ( [ -f requirements.txt ] && ./.venv/bin/python -m pip install -r requirements.txt ) || true
-          # Make sure FastAPI + Uvicorn exist even if requirements.txt is empty
+          # מבטיחים FastAPI + Uvicorn זמינים
           ./.venv/bin/python -m pip install fastapi uvicorn
-          # Export venv python path for subsequent steps
-          echo "VENV_PY=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Import sanity (src-layout)
         shell: bash
+        env:
+          PYTHONPATH: src
         run: |
           set -euo pipefail
-          "$VENV_PY" - <<'PY'
-          import importlib, sys
-          print(f"using interpreter: {sys.executable}")
+          ./.venv/bin/python - <<'PY'
+          import importlib
           m = importlib.import_module("lucy_agent.main")
           assert hasattr(m, "app"), "lucy_agent.main חייב להכיל app של FastAPI"
           print("import sanity: OK")
@@ -67,32 +67,36 @@ jobs:
 
       - name: Boot API (background) + wait for /health
         shell: bash
+        env:
+          PYTHONPATH: src
         run: |
           set -euxo pipefail
-          # Boot (src-layout aware)
-          ( "$VENV_PY" -m uvicorn --app-dir src "$APP_MODULE" --host "$HOST" --port "$PORT" \
-              | tee -a /tmp/api.out ) &
+          # הפעלה ברקע דרך המודול של uvicorn מתוך ה-venv
+          ./.venv/bin/python -m uvicorn --app-dir src "${APP_MODULE}" \
+            --host "${HOST}" --port "${PORT}" > /tmp/api.out 2>&1 &
           echo $! > /tmp/api.pid
 
-          # Wait for health (up to ~20s)
-          for i in {1..40}; do
-            if curl -fsS "http://$HOST:$PORT/health" >/dev/null; then
-              echo "health: OK" | tee artifacts/logs/smoke.log
+          # המתנה ל-health
+          for i in $(seq 1 40); do
+            if curl -fsS "http://${HOST}:${PORT}/health" | jq -e '.status=="ok"' >/dev/null 2>&1; then
+              echo "health: OK"
               exit 0
             fi
             sleep 0.5
           done
 
-          echo "health: TIMEOUT" | tee -a artifacts/logs/smoke.log
+          echo "❌ לא עלה /health בזמן" >&2
+          echo "==== tail /tmp/api.out ====" >&2
+          tail -n 200 /tmp/api.out >&2 || true
           exit 1
 
-      - name: Run smoke v11 (sample)
-        if: success()
+      - name: Run smoke v11 (auto health-only fallback)
         shell: bash
         run: |
           set -euo pipefail
-          # כאן תריץ בדיקות/עישון אמיתיות שלך. נשמור דוגמה קצרה:
-          curl -fsS "http://$HOST:$PORT/health" | jq '.' | tee artifacts/json/health.json
+          # כרגע רק בדיקת בריאות בסיסית; אפשר להרחיב כאן בהמשך
+          curl -fsS "http://${HOST}:${PORT}/health" | tee artifacts/logs/smoke.log
+          echo "smoke: OK"
 
       - name: Stop API (best-effort)
         if: always()
@@ -103,14 +107,13 @@ jobs:
             kill "$(cat /tmp/api.pid)" 2>/dev/null || true
             sleep 1 || true
           fi
-          # make sure port is free
-          fuser -k "${PORT}/tcp" || true
+          # ודאו שהפורט סגור
+          fuser -k ${PORT}/tcp || true
 
       - name: Debug tails on failure
         if: failure()
         shell: bash
         run: |
-          set -euo pipefail
           echo "==== tail /tmp/api.out ===="
           tail -n 200 /tmp/api.out 2>/dev/null || echo "no /tmp/api.out"
           echo "==== smoke.log (first 200 lines) ===="
