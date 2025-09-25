@@ -16,3 +16,8 @@ venv/
 # misc
 main
 *.swp
+# logs & temp
+*.bak
+*.log
+.api.log*
+artifacts/
