@@ -1,6 +1,0 @@
-== Ruff (ruff check .) ===========
-All checks passed!
-== Black (black --check .) =======
-All done! ✨ 🍰 ✨
-45 files would be left unchanged.
-Ruff RC=0  Black RC=0

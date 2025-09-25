@@ -1,23 +1,46 @@
-# Python venv
+# venv
 .venv/
 venv/
-env/
 
-# Caches
+# Python caches
 __pycache__/
-.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+*.pdm-python
 .mypy_cache/
+.pytest_cache/
 .ruff_cache/
+.coverage
+coverage.xml
 
-# Build / dist
-build/
+# build / dist
 dist/
+build/
 *.egg-info/
 
-# Node (ליתר ביטחון אם יש)
-node_modules/
+# IDE
+.vscode/
+.idea/
 
-# ארטיפקטים כלליים
-*.bak
-*.bak.*
+# local env files
+.env
+.env.*
+
+# runtime / tmp
 *.log
+*.tmp
+tmp/
+*.sqlite
+*.db
+
+# project artifacts (CI/local)
+artifact/
+artifact_ci/
+
+# misc
+.DS_Store
+Thumbs.db
+
+# generated
+main
