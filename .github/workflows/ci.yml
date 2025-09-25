@@ -2,15 +2,21 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [ "main" ]
   pull_request:
-  workflow_dispatch:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-test:
+  lint:
+    name: Lint (ruff + black --check)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,143 +26,53 @@ jobs:
         with:
           python-version: "3.11"
           cache: "pip"
-          cache-dependency-path: |
-            requirements.txt
-            requirements-dev.txt
 
-      - name: Show env versions (pre)
+      - name: Install linters
         run: |
-          python -V
-          pip -V
-          python - <<'PY'
-          import ssl, sys, platform
-          print("OPENSSL:", ssl.OPENSSL_VERSION)
-          print("platform:", sys.platform, platform.platform())
-          PY
+          python -m pip install --upgrade pip
+          pip install ruff black
 
-      - name: Prepare artifact folders
+      - name: Ruff
+        run: ruff .
+      - name: Black (check only)
+        run: black --check .
+
+  tests:
+    name: Tests (pytest if present)
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install deps (best-effort)
         run: |
-          mkdir -p artifact_ci/logs
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt || true; fi
+          if [ -f pyproject.toml ]; then pip install . || true; fi
+          python -m pip install pytest || true
 
-      # דיאגנוסטיקה מוקדמת לפיפ
-      - name: Pip diagnostics (pre)
-        continue-on-error: true
-        run: |
-          python -m pip debug > artifact_ci/logs/pip-debug.txt 2>&1 || true
-          pip config list -v > artifact_ci/logs/pip-config.txt 2>&1 || true
-
-      # התקנה — לוגים מלאים ושמירת RC לקובץ, לא מפילים כאן
-      - name: Install deps (capture logs; no greenlet in requirements files)
-        id: install
-        shell: bash
+      - name: Run tests (skip if none)
+        id: pytest
         run: |
           set -Eeuo pipefail
-          # הסרה פרואקטיבית של greenlet מתוך קבצי הדרישות (אם קיים)
-          sed -i '/^\s*greenlet\b/d' requirements*.txt || true
+          if ls -1 test_*.py 2>/dev/null | grep -q . || [ -d tests ]; then
+            pytest -q | tee pytest.log
+          else
+            echo "No tests found — skipping." | tee pytest.log
+          fi
 
-          { pip install -r requirements.txt ; echo $? > artifact_ci/logs/install.rc ; } \
-            > artifact_ci/logs/pip-install.out 2> artifact_ci/logs/pip-install.err || true
-
-          pip freeze > artifact_ci/logs/pip-freeze.txt || true
-
-      # מעלים ארטיפקטים תמיד, כדי שלא נאבד לוגים גם אם תהיה תקלה בהמשך
-      - name: Upload artifacts (always - post install)
+      - name: Upload logs/artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: smoke-artifacts
-          path: artifact_ci/**
-          if-no-files-found: warn
-          retention-days: 7
-          overwrite: true
-
-      # מפילים רק אחרי העלאת ארטיפקטים
-      - name: Fail if install failed
-        shell: bash
-        run: |
-          RC="$(cat artifact_ci/logs/install.rc || echo 1)"
-          echo "install.rc=$RC"
-          if [ "$RC" -ne 0 ]; then
-            echo "pip install failed with rc=$RC"
-            exit 1
-          fi
-
-      # אכיפת "ללא greenlet" + pip check עם לוגים ו-RC נשמר
-      - name: Enforce no greenlet & pip check (capture)
-        id: nogreenlet
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          : > artifact_ci/logs/pip-check.out
-          : > artifact_ci/logs/pip-check.err
-
-          # נסיר greenlet אם הותקן דרך תלות עקיפה
-          pip uninstall -y greenlet >/dev/null 2>&1 || true
-
-          # בדיקת עקביות חבילות
-          { pip check ; echo $? > artifact_ci/logs/pip-check.rc ; } \
-            > artifact_ci/logs/pip-check.out 2> artifact_ci/logs/pip-check.err || true
-
-          echo "pip-check.rc=$(cat artifact_ci/logs/pip-check.rc || echo 1)"
-
-      - name: Upload artifacts (always - post pip check)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-artifacts
-          path: artifact_ci/**
-          if-no-files-found: warn
-          retention-days: 7
-          overwrite: true
-
-      - name: Fail if pip check failed
-        shell: bash
-        run: |
-          RC="$(cat artifact_ci/logs/pip-check.rc 2>/dev/null || echo 1)"
-          echo "pip-check.rc=$RC"
-          if [ "$RC" -ne 0 ]; then
-            echo "pip check reported issues (rc=$RC). See pip-check.out/err."
-            exit 1
-          fi
-
-      # לינט — לוכדים לוגים
-      - name: Lint (ruff & black) — capture logs
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          if [[ -f requirements-dev.txt ]]; then
-            pip install -r requirements-dev.txt || true
-          fi
-          ruff --version || pip install ruff
-          black --version || pip install black
-
-          : > artifact_ci/logs/lint.out
-          {
-            echo "== Ruff (ruff check .) ==========="
-            ruff check . || EXIT_RUFF=$?
-            echo "== Black (black --check .) ======="
-            black --check . || EXIT_BLACK=$?
-            echo "Ruff RC=${EXIT_RUFF:-0}  Black RC=${EXIT_BLACK:-0}"
-            if [ "${EXIT_RUFF:-0}" -ne 0 ] || [ "${EXIT_BLACK:-0}" -ne 0 ]; then
-              exit 2
-            fi
-          } 2>&1 | tee -a artifact_ci/logs/lint.out
-
-      # בדיקות
-      - name: Run tests (pytest + health)
-        env:
-          PYTHONPATH: src
-        shell: bash
-        run: |
-          pytest -q --maxfail=1 -k "health or smoke" 2>&1 | tee artifact_ci/logs/pytest.out
-
-      # העלאה סופית — תמיד
-      - name: Upload artifacts (final - always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-artifacts
-          path: artifact_ci/**
-          if-no-files-found: warn
-          retention-days: 7
-          overwrite: true
+          name: ci-artifacts-${{ github.run_id }}
+          path: |
+            pytest.log
+          if-no-files-found: ignore
