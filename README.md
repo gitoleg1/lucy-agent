@@ -1,18 +1,26 @@
-# Lucy Agent — API קליל עם Observability ו-CI
+# ‎Lucy Agent‎
 
-API קטן להרצת משימות (Tasks) ו-Actions. כולל:
-- בדיקות smoke (v11) מקומיות וב-CI
-- Health & Logs
-- Runbook לצוות
-- Release checklist
+[![CI](https://github.com/gitoleg1/lucy-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gitoleg1/lucy-agent/actions/workflows/ci.yml)
 
-> הערה: המצב יכול להיות **Health-only** (כשאין מסלולי `/tasks` ב-OpenAPI) — זה תקין, וה-CI יעבור עם בדיקת `/health` בלבד.
+סוכן ‎FastAPI‎ רזה ללא ‎greenlet‎.  
+ה־CI מעלה תמיד ארטיפקטים תחת ‎`smoke-artifacts/logs/*`‎ לאבחון בעיות דרך לוגים — בלי ניחושים.
 
 ---
 
-## Quick Start (5 צעדים)
-1. יצירת סביבה והתקנות
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt || true
+## ‎מה הפרויקט עושה בקצרה
+- ‎API‎ בסיסי עם ‎FastAPI‎
+- בדיקת בריאות (‎healthcheck‎) ו-‎Smoke Test‎
+- ניהול ‎CI‎ קפדני: לוגי התקנות, ‎pip check‎, לינט ובדיקות
+
+---
+
+## ‎הרצה מקומית
+```bash
+# וירטואלי (אופציונלי)
+python -m venv .venv && source .venv/bin/activate
+
+# התקנת תלויות רזות (ללא greenlet)
+pip install -r requirements.txt
+
+# הרצה
+uvicorn lucy_agent.main:app --reload
