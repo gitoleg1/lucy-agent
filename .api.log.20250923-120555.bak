@@ -1,0 +1,122 @@
+INFO:     Started server process [194061]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 423, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 62, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1080, in __call__
+    await super().__call__(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/applications.py", line 115, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 55, in wrapped_app
+    raise exc
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 44, in wrapped_app
+    await app(scope, receive, sender)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 738, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 758, in app
+    await route.handle(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 292, in handle
+    await self.app(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 78, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 55, in wrapped_app
+    raise exc
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 44, in wrapped_app
+    await app(scope, receive, sender)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 75, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 306, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 219, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/concurrency.py", line 38, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/anyio/to_thread.py", line 56, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2425, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 941, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/src/routers/tasks.py", line 770, in agent_shell
+    return quick_run(QuickRunIn(
+           ^^^^^^^^^^^^^^^^^^^^^
+TypeError: quick_run() missing 1 required positional argument: 'request'
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 423, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/uvicorn/middleware/proxy_headers.py", line 62, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/fastapi/applications.py", line 1080, in __call__
+    await super().__call__(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/applications.py", line 115, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 186, in __call__
+    raise exc
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/middleware/errors.py", line 164, in __call__
+    await self.app(scope, receive, _send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 55, in wrapped_app
+    raise exc
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 44, in wrapped_app
+    await app(scope, receive, sender)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 738, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 758, in app
+    await route.handle(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 292, in handle
+    await self.app(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 78, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 55, in wrapped_app
+    raise exc
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/_exception_handler.py", line 44, in wrapped_app
+    await app(scope, receive, sender)
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/routing.py", line 75, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 306, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 219, in run_endpoint_function
+    return await run_in_threadpool(dependant.call, **values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/starlette/concurrency.py", line 38, in run_in_threadpool
+    return await anyio.to_thread.run_sync(func)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/anyio/to_thread.py", line 56, in run_sync
+    return await get_async_backend().run_sync_in_worker_thread(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 2425, in run_sync_in_worker_thread
+    return await future
+           ^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/.venv/lib/python3.12/site-packages/anyio/_backends/_asyncio.py", line 941, in run
+    result = context.run(func, *args)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/oleg/projects/lucy-agent/src/routers/tasks.py", line 770, in agent_shell
+    return quick_run(QuickRunIn(
+           ^^^^^^^^^^^^^^^^^^^^^
+TypeError: quick_run() missing 1 required positional argument: 'request'
