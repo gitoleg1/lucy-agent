@@ -1,5 +1,6 @@
 from fastapi import APIRouter
-from ..models import EchoRequest, ActionResult
+
+from ..models import ActionResult, EchoRequest
 
 router = APIRouter()
 

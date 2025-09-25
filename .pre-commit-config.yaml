@@ -1,3 +1,14 @@
+# הפעלה רק על קבצי הפרויקט, לא על וירטואלית/ארטיפקטים
+exclude: |
+  (?x)^(
+    \.git/|
+    \.venv/|venv/|env/|
+    \.mypy_cache/|\.pytest_cache/|\.ruff_cache/|
+    dist/|build/|
+    node_modules/|
+    .*\.bak(\..*)?$
+  )
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
@@ -10,10 +21,13 @@ repos:
     rev: v0.6.9
     hooks:
       - id: ruff
-        args: [ "--fix" ]
+        args: [--fix]
+        # נטפל אך ורק בקוד של הפרויקט
+        files: ^(src|lucy_agent|scripts|tests)/.*\.py$
 
   - repo: https://github.com/psf/black
-    rev: 25.9.0
+    rev: 24.10.0
     hooks:
       - id: black
-        args: [ "--check" ]
+        # נטפל אך ורק בקוד של הפרויקט
+        files: ^(src|lucy_agent|scripts|tests)/.*\.py$

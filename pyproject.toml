@@ -9,12 +9,10 @@ exclude = '''
 '''
 
 [tool.ruff]
+# מקובל להתעלם מאורך שורה ב-Ruff ולתת ל-Black לאכוף עימוד.
 line-length = 88
 target-version = "py311"
-# סט חוקים בסיסי: שגיאות/אזהרות, ייבוא, באגים שכיחים
-select = ["E", "F", "I", "B"]
-ignore = []  # נוכל להוסיף בהמשך אם נדרש
-src = ["."]
+src = ["src", "lucy_agent", "."]  # תקן נתיבים לפרויקט שלך
 exclude = [
   ".git",
   ".venv",
@@ -29,8 +27,12 @@ exclude = [
   "artifact_ci",
 ]
 
+[tool.ruff.lint]
+# סט חוקים בסיסי ונקי; מתעלמים מ-E501 כדי לא להכפיל אכיפה מול Black
+select = ["E", "F", "I", "B"]
+ignore = ["E501"]
+
 [tool.ruff.lint.isort]
-# יישור לרוחב שורה של 88 ופרופיל Black
-known-first-party = ["."]
+known-first-party = ["lucy_agent", "src"]
 combine-as-imports = true
 force-sort-within-sections = true

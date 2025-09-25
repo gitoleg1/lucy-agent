@@ -1,23 +1,45 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-
-# Local artifacts / logs
-artifact/
-artifact_ci/
-logs/
-*.log
-
-# venvs
+# venv
 .venv/
 venv/
 
-# misc
-main
-*.swp
-# logs & temp
-*.bak
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+
+# build / dist
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# env files
+.env
+.env.*
+
+# runtime / tmp
 *.log
-.api.log*
-artifacts/
+*.tmp
+tmp/
+*.sqlite
+*.db
+
+# project artifacts (CI/local)
+artifact/
+artifact_ci/
+
+# misc
+.DS_Store
+Thumbs.db
+
+# generated
+main
