@@ -7,15 +7,12 @@ on:
     branches: [ "main" ]
 
 jobs:
-  tests:
-    name: tests
+  ci:
     runs-on: ubuntu-24.04
-
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONFAULTHANDLER: "1"
       PYTHONPATH: "src"
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,29 +22,40 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Prepare artifact dirs (always)
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/logs artifacts/tmp
+
       - name: Install deps
-        shell: bash
         run: |
           set -euxo pipefail
           python -m venv .venv
-          . .venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # תלות לטסטים (TestClient של Starlette/FASTAPI משתמש ב-httpx; גרסאות ישנות יותר ב-requests)
-          pip install pytest httpx requests
+          ./.venv/bin/python -m pip install --upgrade pip
+          # תלויות ריצה של האפליקציה
+          ./.venv/bin/python -m pip install -r requirements.txt
+          # תלויות בדיקות (pytest + לקוח בדיקות מבוסס Starlette/httpx)
+          ./.venv/bin/python -m pip install "pytest>=8.0,<9.0" httpx requests
 
-      - name: Run pytest
-        shell: bash
+      - name: Import sanity (src-layout)
         run: |
           set -euo pipefail
-          . .venv/bin/activate
-          pytest -q
+          ./.venv/bin/python - <<'PY'
+          import importlib
+          m = importlib.import_module("lucy_agent.main")
+          assert hasattr(m, "app"), "lucy_agent.main חייב להכיל app של FastAPI"
+          print("import sanity: OK")
+          PY
 
-      - name: Upload smoke artifacts (always)
+      - name: Run tests (pytest)
+        run: |
+          set -euo pipefail
+          ./.venv/bin/python -m pytest -q -rA | tee artifacts/logs/pytest.out
+
+      - name: Upload artifacts (always)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-artifacts
-          path: |
-            .pytest_cache
+          path: artifacts/**
           if-no-files-found: warn
