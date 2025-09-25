@@ -1,54 +1,53 @@
 #!/usr/bin/env bash
-# scripts/ci_wait_and_fetch.sh
-# מחכה לריצה האחרונה ב-GitHub Actions שתסתיים, מוריד ארטיפקטים ומציג לוגים רלוונטיים.
 set -euo pipefail
 
-log() { printf '[INFO] %s\n' "$*"; }
-warn() { printf '⚠️  %s\n' "$*" >&2; }
-
-# 1) זיהוי הריפו ו-RUN_ID אחרון
-log "מזהה ריפו דרך gh…"
+echo "[INFO] מזהה ריפו דרך gh…"
 REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-log "REPO=$REPO"
+echo "[INFO] REPO=${REPO}"
 
-log "לוכד/ת RUN_ID של הריצה האחרונה…"
-RUN_ID=$(gh run list --repo "$REPO" --limit 1 --json databaseId --jq '.[0].databaseId')
-if [[ -z "${RUN_ID:-}" ]]; then
-  warn "לא נמצא RUN_ID"; exit 1
+echo "[INFO] לוכד/ת RUN_ID של הריצה האחרונה…"
+RUN_ID=$(gh run list --limit 1 --json databaseId --jq '.[0].databaseId')
+echo "[INFO] RUN_ID=${RUN_ID}"
+
+echo "[INFO] מציג/ה תקציר הריצה…"
+gh run view "$RUN_ID" || true
+
+echo "[INFO] ממתין/ה לריצה שתסתיים (לא אינטראקטיבי)…"
+gh run watch "$RUN_ID" || true
+echo "[INFO] Run ${RUN_ID} completed"
+
+echo "[INFO] מביא/ה מזהי jobs…"
+JOBS_JSON=$(gh run view "$RUN_ID" --json jobs -q '.jobs')
+JOB_IDS=$(echo "$JOBS_JSON" | jq -r '.[].id' 2>/dev/null || true)
+
+if [[ -n "${JOB_IDS}" ]]; then
+  for J in ${JOB_IDS}; do
+    echo "[INFO] מציג/ה לוג של ה-Job (id=${J})…"
+    gh job view "${J}" --log || true
+  done
+else
+  echo "⚠️  לא נמצאו jobs בריצה (אנסה להביא לוג כללי)…"
+  gh run view "$RUN_ID" --log || echo "⚠️  לא הצלחתי להביא לוג כללי."
 fi
-log "RUN_ID=$RUN_ID"
 
-# 2) תקציר מצב הריצה
-log "מציג/ה תקציר הריצה…"
-gh run view "$RUN_ID" --repo "$REPO" --json databaseId,url,status,conclusion,headBranch,headSha,workflowName,displayTitle \
-  --jq '"URL="+.url, "status="+.status+" conclusion="+( .conclusion//"n/a")+" | "+.headBranch+"@"+.headSha[0:7], "workflow="+.workflowName+" | "+.displayTitle'
+echo "[INFO] מנקה תיקיית ארטיפקטים מקומית: ./artifact …"
+rm -rf artifact || true
+mkdir -p artifact
 
-# 3) המתנה עד סיום (אם עדיין רצה)
-log "ממתין/ה לריצה שתסתיים (לא אינטראקטיבי)…"
-# אם כבר הסתיים, הפקודה תחזור מיד
-gh run watch "$RUN_ID" --repo "$REPO" || true
+echo "[INFO] מוריד/ה ארטיפקטים (smoke-artifacts)…"
+if gh run download "$RUN_ID" -n smoke-artifacts -D artifact; then
+  echo "[INFO] הורדה הושלמה אל: artifact"
+else
+  echo "⚠️  אין ארטיפקטים בשם smoke-artifacts (או שההורדה נכשלה)."
+fi
 
-# 4) הצגת לוגים מרוכזת לקונסול
-log "מציג/ה לוגים…"
-# נציג HEAD של ה־job העיקרי (תמיד יש רק job אחד אצלך בשם ci)
-gh run view "$RUN_ID" --repo "$REPO" --log | sed -n '1,400p' || true
-
-# 5) הורדת ארטיפקטים (כולל /tmp/api.out והלוגים שה־workflow מעלה)
-ART_DIR="./artifact"
-log "מוריד/ה ארטיפקטים (smoke-artifacts)…"
-mkdir -p "$ART_DIR"
-gh run download "$RUN_ID" --repo "$REPO" -n smoke-artifacts -D "$ART_DIR" || warn "אין ארטיפקטים להוריד"
-
-# 6) תצוגת לוגים מהארטיפקט/טמפ
 echo "---- smoke.log ----"
-sed -n '1,200p' "$ART_DIR/artifacts/logs/smoke.log" 2>/dev/null || echo "אין smoke.log בארטיפקט"
+sed -n '1,200p' artifact/artifacts/logs/smoke.log 2>/dev/null || echo "אין smoke.log בארטיפקט"
 
 echo "---- env.txt ----"
-sed -n '1,120p' "$ART_DIR/artifacts/logs/env.txt" 2>/dev/null || echo "אין env.txt בארטיפקט"
+sed -n '1,200p' artifact/artifacts/json/env.txt 2>/dev/null || echo "אין env.txt בארטיפקט"
 
 echo "---- api.out (סוף 200 שורות) ----"
-tail -n 200 /tmp/api.out 2>/dev/null \
-  || tail -n 200 "$ART_DIR/tmp/api.out" 2>/dev/null \
-  || echo "אין api.out"
+tail -n 200 /tmp/api.out 2>/dev/null || tail -n 200 artifact/tmp/api.out 2>/dev/null || echo "אין api.out בארטיפקט"
 
-log "סיום. קבצים בתיקייה: $ART_DIR (אם קיימים)."
+echo "[INFO] סיום. קבצים בתיקייה: ./artifact (אם קיימים)."
