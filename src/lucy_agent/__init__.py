@@ -1,2 +1,1 @@
-# src/lucy_agent/__init__.py
-__all__ = []
+__all__ = ["main"]

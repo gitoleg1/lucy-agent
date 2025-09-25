@@ -2,23 +2,21 @@ name: CI
 
 on:
   push:
+    branches: [ main ]
   pull_request:
 
-permissions:
-  contents: read
+env:
+  PYTHONUNBUFFERED: "1"
+  PYTHONFAULTHANDLER: "1"
+  PYTHONPATH: src
+  APP_MODULE: lucy_agent.main:app
+  HOST: 127.0.0.1
+  PORT: 8000
+  SMOKE_ARTIFACT: smoke-artifacts
 
 jobs:
   ci:
     runs-on: ubuntu-24.04
-
-    env:
-      PYTHONUNBUFFERED: "1"
-      PYTHONFAULTHANDLER: "1"
-      PYTHONPATH: src
-      APP_MODULE: lucy_agent.main:app
-      HOST: 127.0.0.1
-      PORT: "8000"
-      SMOKE_ARTIFACT: smoke-artifacts
 
     steps:
       - name: Checkout
@@ -43,7 +41,6 @@ jobs:
           mkdir -p artifacts/json artifacts/logs artifacts/tmp
           : > /tmp/api.out || true
 
-      # התקנת תלויות — נשענים על requirements.txt בלבד (לא מנחשים).
       - name: Install deps
         shell: bash
         run: |
@@ -54,9 +51,10 @@ jobs:
           # ביטוח: מוודאים ש-fastapi+uvicorn אכן מותקנים
           ./.venv/bin/python -m pip install fastapi uvicorn
 
-      # בדיקת יבוא מודול ושהאפליקציה מכילה app של FastAPI
       - name: Import sanity (src-layout)
         shell: bash
+        env:
+          PYTHONPATH: src
         run: |
           set -euo pipefail
           ./.venv/bin/python - <<'PY'
@@ -66,13 +64,17 @@ jobs:
           print("import sanity: OK")
           PY
 
-      # מעלים את ה-API ברקע ומחכים ל-/health
       - name: Boot API (background) + wait for /health
         shell: bash
+        env:
+          PYTHONPATH: src
         run: |
           set -euxo pipefail
+          # מריצים uvicorn עם asyncio ולא uvloop כדי לעקוף את הקריסה
           ./.venv/bin/python -m uvicorn --app-dir src "${APP_MODULE}" \
-            --host "${HOST}" --port "${PORT}" > /tmp/api.out 2>&1 &
+            --host "${HOST}" --port "${PORT}" \
+            --loop asyncio --http h11 > /tmp/api.out 2>&1 &
+
           echo $! > /tmp/api.pid
 
           for i in $(seq 1 40); do
@@ -88,7 +90,6 @@ jobs:
           tail -n 200 /tmp/api.out >&2 || true
           exit 1
 
-      # עוצרים את השרת תמיד (גם במקרה כשל)
       - name: Stop API (best-effort)
         if: always()
         shell: bash
@@ -98,9 +99,9 @@ jobs:
             kill "$(cat /tmp/api.pid)" 2>/dev/null || true
             sleep 1 || true
           fi
+          # ודאו שהפורט סגור
           fuser -k ${PORT}/tcp || true
 
-      # במקרה כשל — שופכים זנב לוג
       - name: Debug tails on failure
         if: failure()
         shell: bash
@@ -108,7 +109,6 @@ jobs:
           echo "==== tail /tmp/api.out ===="
           tail -n 200 /tmp/api.out 2>/dev/null || echo "no /tmp/api.out"
 
-      # אורזים ארטיפקטים מינימליים
       - name: Package artifacts
         if: always()
         shell: bash
@@ -121,5 +121,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.SMOKE_ARTIFACT }}
-          path: artifacts/**
-          if-no-files-found: warn
+          path: |
+            artifacts/**

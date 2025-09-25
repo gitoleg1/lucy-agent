@@ -17,14 +17,15 @@ gh run watch "$RUN_ID" || true
 echo "[INFO] Run ${RUN_ID} completed"
 
 echo "[INFO] מביא/ה מזהי jobs…"
-JOBS_JSON=$(gh run view "$RUN_ID" --json jobs -q '.jobs')
-JOB_IDS=$(echo "$JOBS_JSON" | jq -r '.[].id' 2>/dev/null || true)
+# נשלוף ישירות את ה-ids; אם אין, נקבל שורה ריקה
+JOB_IDS=$(gh run view "$RUN_ID" --json jobs -q '.jobs[].id' 2>/dev/null || true)
 
 if [[ -n "${JOB_IDS}" ]]; then
-  for J in ${JOB_IDS}; do
+  while IFS= read -r J; do
+    [[ -z "$J" ]] && continue
     echo "[INFO] מציג/ה לוג של ה-Job (id=${J})…"
-    gh job view "${J}" --log || true
-  done
+    gh run view "$RUN_ID" --job "$J" --log || true
+  done <<< "$JOB_IDS"
 else
   echo "⚠️  לא נמצאו jobs בריצה (אנסה להביא לוג כללי)…"
   gh run view "$RUN_ID" --log || echo "⚠️  לא הצלחתי להביא לוג כללי."
