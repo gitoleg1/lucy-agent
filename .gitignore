@@ -1,23 +1,23 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-
-# Local artifacts / logs
-artifact/
-artifact_ci/
-logs/
-*.log
-
-# venvs
+# Python venv
 .venv/
 venv/
+env/
 
-# misc
-main
-*.swp
-# logs & temp
+# Caches
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build / dist
+build/
+dist/
+*.egg-info/
+
+# Node (ליתר ביטחון אם יש)
+node_modules/
+
+# ארטיפקטים כלליים
 *.bak
+*.bak.*
 *.log
-.api.log*
-artifacts/

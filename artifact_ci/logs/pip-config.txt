@@ -1,0 +1,6 @@
+For variant 'global', will try loading '/etc/xdg/pip/pip.conf'
+For variant 'global', will try loading '/etc/pip.conf'
+For variant 'user', will try loading '/home/runner/.pip/pip.conf'
+For variant 'user', will try loading '/home/runner/.config/pip/pip.conf'
+For variant 'site', will try loading '/opt/hostedtoolcache/Python/3.11.13/x64/pip.conf'
+global.break-system-packages='true'

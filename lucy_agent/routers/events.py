@@ -1,24 +1,36 @@
-import os
 import asyncio
-import json
 from datetime import datetime, timezone
-from fastapi import APIRouter, Depends, status, Request
-from fastapi.responses import StreamingResponse, JSONResponse, Response
+import json
+import os
+
+from fastapi import APIRouter, Depends, Request, status
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+
 from ..security import require_api_key
 
 router = APIRouter()
 
 HEARTBEAT_INTERVAL = float(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "1.0"))
-ALLOWED_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
-STARTED_AT = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+ALLOWED_ORIGINS = [
+    o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()
+]
+STARTED_AT = (
+    datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+)
 VERSION = "0.1.0"
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
 
 
-def _sse_event(event: str | None, data: dict | str, *, event_id: int | None = None) -> bytes:
+def _sse_event(
+    event: str | None, data: dict | str, *, event_id: int | None = None
+) -> bytes:
     """
     SSE תקין:
       id: <int>\n
@@ -53,7 +65,9 @@ def _pick_cors_origin(request: Request) -> str | None:
 
 
 @router.get("/stream/tasks/{task_id}")
-async def stream_task(task_id: str, request: Request, _: bool = Depends(require_api_key)):
+async def stream_task(
+    task_id: str, request: Request, _: bool = Depends(require_api_key)
+):
     """
     זרם SSE: started → heartbeat×3 → done
     - 'retry: 3000' בתחילת הזרם.

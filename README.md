@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/gitoleg1/lucy-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gitoleg1/lucy-agent/actions/workflows/ci.yml)
 
-סוכן ‎FastAPI‎ רזה ללא ‎greenlet‎.  
+סוכן ‎FastAPI‎ רזה ללא ‎greenlet‎.
 ה־CI מעלה תמיד ארטיפקטים תחת ‎`smoke-artifacts/logs/*`‎ לאבחון בעיות דרך לוגים — בלי ניחושים.
 
 ---
