@@ -26,19 +26,17 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/logs artifacts/tmp
           : > artifacts/logs/pytest.out || true
+          : > artifacts/logs/pip-freeze.txt || true
 
-      - name: Install deps
+      - name: Install deps (no greenlet)
         run: |
           set -euxo pipefail
           python -m venv .venv
           ./.venv/bin/python -m pip install --upgrade pip
-          # תלוי בקובץ requirements של הפרויקט
           ./.venv/bin/python -m pip install -r requirements.txt
-          # כלים לבדיקה
-          ./.venv/bin/python -m pip install pytest httpx requests starlette
-          # עקיפת הקריסה: greenlet גורם לסגפולט על ה־runner — מסירים
+          # לוודא שאין greenlet
           ./.venv/bin/python -m pip uninstall -y greenlet || true
-          # מוודאים שהוא באמת לא מותקן
+          ./.venv/bin/python -m pip freeze | tee artifacts/logs/pip-freeze.txt
           ./.venv/bin/python - <<'PY'
           import importlib, sys
           m = importlib.util.find_spec("greenlet")
@@ -57,12 +55,11 @@ jobs:
 
       - name: Run tests (pytest)
         id: pytest_run
-        continue-on-error: true  # נרצה להעלות ארטיפקטים גם אם נכשל
+        continue-on-error: true
         run: |
           set -euxo pipefail
-          ./.venv/bin/python -m pytest -q \
-            | tee artifacts/logs/pytest.out
-          echo "exit_code=$?" >> $GITHUB_OUTPUT
+          ./.venv/bin/python -m pytest -q | tee artifacts/logs/pytest.out
+          echo "exit_code=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
 
       - name: Upload artifacts (always)
         if: always()
@@ -72,7 +69,6 @@ jobs:
           path: artifacts/**
           if-no-files-found: warn
 
-      # כישלול מכוון בסוף אם pytest נכשל
       - name: Fail if pytest failed
         if: steps.pytest_run.outputs.exit_code != '0'
         run: |

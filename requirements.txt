@@ -1,6 +1,9 @@
 fastapi==0.117.1
 uvicorn==0.36.0
 pydantic==2.11.9
-# pin to avoid ubuntu-24.04 segfaults:
-greenlet==3.0.3
-sqlalchemy==2.0.43
+SQLAlchemy==2.0.43
+
+# תלותות לבדיקות/קליינט
+starlette==0.48.0
+httpx==0.27.2
+pytest==8.3.3
