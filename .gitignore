@@ -1,18 +1,18 @@
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
 
-# venv
+# Local artifacts / logs
+artifact/
+artifact_ci/
+logs/
+*.log
+
+# venvs
 .venv/
-# Artifacts & logs
-artifacts/
-*.code
-# OS/editor
-.DS_Store
-.idea/
-.vscode/
-# API logs
-.api.log*
-# Editors
-*~
-.#*
+venv/
+
+# misc
+main
+*.swp

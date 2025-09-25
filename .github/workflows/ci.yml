@@ -26,37 +26,21 @@ jobs:
           set -euxo pipefail
           mkdir -p logs
 
-      - name: Capture env & tool versions
+      - name: Capture env
         run: |
           set -euxo pipefail
           {
-            echo "=== uname -a ==="
-            uname -a
-            echo "=== lsb_release -a ==="
-            lsb_release -a || true
-            echo "=== python -V ==="
-            python -V
-            echo "=== pip --version ==="
-            pip --version
+            echo "=== uname -a ==="; uname -a
+            echo "=== python -V ==="; python -V
+            echo "=== pip --version ==="; pip --version
           } | tee logs/env.txt
 
-      - name: Install deps (capture full pip logs)
+      - name: Install deps (capture logs)
         run: |
           set -euxo pipefail
           python -m pip install -U pip setuptools wheel > >(tee logs/pip-bootstrap.out) 2> >(tee logs/pip-bootstrap.err >&2)
           python -m pip install -r requirements.txt -vvv > >(tee logs/pip-install.out) 2> >(tee logs/pip-install.err >&2)
           python -m pip check | tee logs/pip-check.out
-          python - <<'PY' | tee logs/import-versions.txt
-import importlib
-mods = ["fastapi","starlette","pydantic","httpx","uvicorn","sqlalchemy","pytest"]
-for m in mods:
-    try:
-        mod = importlib.import_module(m)
-        v = getattr(mod, "__version__", "n/a")
-        print(f"{m}=={v}")
-    except Exception as e:
-        print(f"{m} IMPORT_ERROR: {e}")
-PY
           python -m pip freeze | tee logs/pip-freeze.txt
 
       - name: Import sanity (src-layout)
@@ -65,16 +49,10 @@ PY
           export PYTHONPATH=src
           python - <<'PY'
 import importlib
-mods = ["lucy_agent.api","lucy_agent.__init__","fastapi","starlette"]
-for m in mods:
-    try:
-        importlib.import_module(m)
-        print("OK:", m)
-    except Exception as e:
-        print("FAIL:", m, "->", e)
-        raise
+for m in ["fastapi","starlette","httpx","lucy_agent.api"]:
+    importlib.import_module(m)
+print("import sanity OK")
 PY
-          echo "import sanity done" | tee -a logs/pytest.out
 
       - name: Run tests (pytest)
         run: |
@@ -88,7 +66,6 @@ PY
         uses: actions/upload-artifact@v4
         with:
           name: smoke-artifacts
-          path: |
-            logs/**
+          path: logs/**
           if-no-files-found: warn
           retention-days: 7
