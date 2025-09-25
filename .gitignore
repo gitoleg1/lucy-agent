@@ -7,7 +7,6 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.pdm-python
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
@@ -23,7 +22,7 @@ build/
 .vscode/
 .idea/
 
-# local env files
+# env files
 .env
 .env.*
 
