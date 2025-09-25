@@ -62,6 +62,7 @@ jobs:
           path: artifact_ci/**
           if-no-files-found: warn
           retention-days: 7
+          overwrite: true
 
       - name: Fail if install failed
         shell: bash
@@ -73,14 +74,28 @@ jobs:
             exit 1
           fi
 
-      - name: Lint (ruff & black)
+      - name: Lint (ruff & black) — capture logs
         shell: bash
         run: |
-          pip install -r requirements-dev.txt || true
+          set -Eeuo pipefail
+          # פולבק: אם אין requirements-dev.txt נתקין רף/בלק ידנית
+          if [[ -f requirements-dev.txt ]]; then
+            pip install -r requirements-dev.txt || true
+          fi
           ruff --version || pip install ruff
           black --version || pip install black
-          ruff .
-          black --check .
+
+          : > artifact_ci/logs/lint.out
+          {
+            echo "== Ruff (ruff check .) ==========="
+            ruff check . || EXIT_RUFF=$?
+            echo "== Black (black --check .) ======="
+            black --check . || EXIT_BLACK=$?
+            echo "Ruff RC=${EXIT_RUFF:-0}  Black RC=${EXIT_BLACK:-0}"
+            if [ "${EXIT_RUFF:-0}" -ne 0 ] || [ "${EXIT_BLACK:-0}" -ne 0 ]; then
+              exit 2
+            fi
+          } 2>&1 | tee -a artifact_ci/logs/lint.out
 
       - name: Run tests (pytest + health)
         env:
@@ -97,3 +112,4 @@ jobs:
           path: artifact_ci/**
           if-no-files-found: warn
           retention-days: 7
+          overwrite: true
