@@ -42,22 +42,18 @@ jobs:
         run: |
           set -euxo pipefail
           python -m pip install --upgrade pip
-          # מתקינים את התלויות של הפרויקט
           pip install -r requirements.txt
-          # לעשן דרך TestClient צריך httpx (סטארלט משתמש ב־httpx ב-TestClient)
           pip install "httpx>=0.27,<0.28"
-          # הדפסות דיאגנוסטיקה קצרות
           python - <<'PY'
           import sys, platform, pkgutil
           print("python:", sys.version)
           print("platform:", platform.platform())
           for name in ["fastapi","starlette","uvicorn","httpx","pydantic"]:
-              m = pkgutil.find_loader(name)
-              if m is None:
-                  print(name, "NOT INSTALLED")
-              else:
+              try:
                   mod = __import__(name)
                   print(name, getattr(mod, "__version__", "unknown"))
+              except Exception as e:
+                  print(name, "IMPORT ERROR:", e)
           PY
 
       - name: Import sanity (src-layout)
@@ -71,7 +67,6 @@ jobs:
           print("import sanity: OK")
           PY
 
-      # 🔥 עשן דרך ASGI TestClient – בלי להרים uvicorn, עוקף את הסגפולט
       - name: Smoke /health via TestClient (no server)
         shell: bash
         run: |
@@ -84,12 +79,10 @@ jobs:
               print("status_code:", r.status_code)
               print("json:", r.json())
               assert r.status_code == 200, "bad status code"
-              assert isinstance(r.json(), dict), "response not json object"
               assert r.json().get("status") == "ok", "unexpected /health payload"
           print("health: OK")
           PY
 
-      # השארנו צעדי ניתוק/איסוף לוגים כדי לשמר עקביות עם הסקריפט שלך
       - name: Stop API (best-effort)
         if: always()
         shell: bash
