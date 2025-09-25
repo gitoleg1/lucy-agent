@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Dict
 
 from sqlalchemy import select
@@ -12,7 +12,7 @@ from .db import SessionLocal
 from .models import EventLog, RunStatus
 from .models import Task as TaskORM
 
-UTC = timezone.utc
+UTC = UTC
 
 
 async def _log(

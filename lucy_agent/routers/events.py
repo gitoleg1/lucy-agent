@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -14,18 +14,12 @@ HEARTBEAT_INTERVAL = float(os.getenv("HEARTBEAT_INTERVAL_SECONDS", "1.0"))
 ALLOWED_ORIGINS = [
     o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()
 ]
-STARTED_AT = (
-    datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-)
+STARTED_AT = datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 VERSION = "0.1.0"
 
 
 def now_iso() -> str:
-    return (
-        datetime.now(timezone.utc)
-        .isoformat(timespec="milliseconds")
-        .replace("+00:00", "Z")
-    )
+    return datetime.now(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def _sse_event(

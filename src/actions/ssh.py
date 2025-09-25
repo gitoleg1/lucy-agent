@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 import traceback
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
 import asyncssh
 from fastapi import APIRouter
@@ -19,9 +19,9 @@ def sh_quote(s: str) -> str:
 
 def _normalize_command(
     cmd: Union[str, List[str], None],
-    commands: Optional[List[str]] = None,
-    workdir: Optional[str] = None,
-    env: Optional[Dict[str, str]] = None,
+    commands: List[str] | None = None,
+    workdir: str | None = None,
+    env: Dict[str, str] | None = None,
 ) -> str:
     seq: List[str] = []
     if env:
@@ -56,9 +56,9 @@ async def _try_log(
     request: Any,
     params: Dict[str, Any],
     success: bool,
-    output: Optional[str],
-    error: Optional[str],
-    meta: Optional[Dict[str, Any]] = None,
+    output: str | None,
+    error: str | None,
+    meta: Dict[str, Any] | None = None,
 ):
     try:
         rq = (

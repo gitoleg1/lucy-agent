@@ -6,7 +6,7 @@ import json
 import re
 import time
 from collections.abc import AsyncIterator
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -37,7 +37,7 @@ async def publish_done(task_id: str, payload: Dict[str, Any]) -> None:
 # === מודלים ===
 class TaskEvent(BaseModel):
     type: str  # "heartbeat" | "update" | "done"
-    data: Optional[Dict[str, Any] | str] = None
+    data: Dict[str, Any] | str | None = None
     ts: float
 
 
@@ -149,7 +149,7 @@ async def _event_stream(task_id: str) -> AsyncIterator[bytes]:
                     }
                     yield sse_event("update", norm)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield sse_event("heartbeat", {"task_id": task_id, "ts": now_iso()})
                 last_heartbeat = time.time()
                 continue

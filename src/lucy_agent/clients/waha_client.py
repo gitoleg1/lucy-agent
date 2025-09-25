@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import httpx
 
@@ -33,7 +33,7 @@ class WahaClient:
             return r.json()
 
     def send_text(
-        self, chat_id: str, text: str, quoted_msg_id: Optional[str] = None
+        self, chat_id: str, text: str, quoted_msg_id: str | None = None
     ) -> Dict[str, Any]:
         """
         שולח טקסט ל-WAHA. קודם כל מנסה /api/sendText (עם/בלי ?session=),
@@ -62,7 +62,7 @@ class WahaClient:
             ("/sendText", False),
         ]
 
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
         with httpx.Client(timeout=15.0) as c:
             for path, put_session in paths:
                 url = self._url(path, with_session_query=put_session)

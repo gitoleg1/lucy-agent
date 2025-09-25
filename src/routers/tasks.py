@@ -5,7 +5,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -100,7 +100,7 @@ class ActionIn(BaseModel):
 
 class TaskCreate(BaseModel):
     title: str
-    description: Optional[str] = None
+    description: str | None = None
     require_approval: bool = False
     actions: List[ActionIn] = Field(default_factory=list)
 
@@ -116,11 +116,11 @@ class RunOut(BaseModel):
     task_id: str
     action_id: str
     status: str
-    started_at: Optional[str] = None
-    ended_at: Optional[str] = None
-    stdout_path: Optional[str] = None
-    stderr_path: Optional[str] = None
-    exit_code: Optional[int] = None
+    started_at: str | None = None
+    ended_at: str | None = None
+    stdout_path: str | None = None
+    stderr_path: str | None = None
+    exit_code: int | None = None
 
 
 class AuditOut(BaseModel):
@@ -134,13 +134,13 @@ class AuditOut(BaseModel):
 class TaskOut(BaseModel):
     id: str
     title: str
-    description: Optional[str]
+    description: str | None
     status: str
     require_approval: int
     created_at: str
     updated_at: str
-    started_at: Optional[str]
-    ended_at: Optional[str]
+    started_at: str | None
+    ended_at: str | None
     approvals: List[Dict[str, Any]] = Field(default_factory=list)
 
 
@@ -501,7 +501,7 @@ def _json_parse(val):
     return None
 
 
-def _tail_bytes(path: Optional[str], limit: int = 400) -> Optional[str]:
+def _tail_bytes(path: str | None, limit: int = 400) -> str | None:
     if not path:
         return None
     try:
@@ -1007,7 +1007,7 @@ def quick_run(payload: QuickRunIn, request: Request):
 # ------------------ Agent Shell ------------------
 class AgentShellIn(BaseModel):
     cmd: str
-    title: Optional[str] = "agent-shell"
+    title: str | None = "agent-shell"
 
 
 @router.post("/agent/shell", response_model=QuickRunOut)
