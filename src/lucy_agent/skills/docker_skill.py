@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
-from typing import Any, Dict, List
+from typing import Any
 
 import docker
 
@@ -11,9 +11,9 @@ class DockerSkill:
     def __init__(self) -> None:
         self.client = docker.from_env()
 
-    def ps(self, all: bool = False) -> List[Dict[str, Any]]:
+    def ps(self, all: bool = False) -> list[dict[str, Any]]:
         containers = self.client.containers.list(all=all)
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for c in containers:
             image = c.image.tags or [c.image.short_id]
             out.append(

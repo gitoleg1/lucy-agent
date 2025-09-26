@@ -1,9 +1,7 @@
 import re
 
 SECRET_PATTERNS = [
-    re.compile(
-        r"(?i)(x-api-key|authorization|password|passphrase|token)\s*[:=]\s*([^\s]+)"
-    ),
+    re.compile(r"(?i)(x-api-key|authorization|password|passphrase|token)\s*[:=]\s*([^\s]+)"),
     re.compile(r"(?i)(AGENT_API_KEY)=([^\s]+)"),
 ]
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -13,7 +13,7 @@ class WahaClient:
         self.session = os.getenv("WAHA_SESSION", "default")
         self.base = base
 
-        hdrs: Dict[str, str] = {}
+        hdrs: dict[str, str] = {}
         if token:
             hdrs["X-Token"] = token
         if self.session:
@@ -26,7 +26,7 @@ class WahaClient:
             return f"{self.base}{path}{sep}session={self.session}"
         return f"{self.base}{path}"
 
-    def session_info(self) -> Dict[str, Any]:
+    def session_info(self) -> dict[str, Any]:
         with httpx.Client(timeout=10.0) as c:
             r = c.get(self._url(f"/api/sessions/{self.session}"), headers=self.headers)
             r.raise_for_status()
@@ -34,20 +34,20 @@ class WahaClient:
 
     def send_text(
         self, chat_id: str, text: str, quoted_msg_id: Optional[str] = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         שולח טקסט ל-WAHA. קודם כל מנסה /api/sendText (עם/בלי ?session=),
         ורק אחר כך גרסאות נוספות. עוצר בהצלחה הראשונה; מחזיר JSON.
         אם כולן נכשלות — מעלה את השגיאה האחרונה (כולל קוד מ-WAHA).
         """
-        payloads: List[Dict[str, Any]] = []
+        payloads: list[dict[str, Any]] = []
 
-        p1: Dict[str, Any] = {"chatId": chat_id, "text": text}
+        p1: dict[str, Any] = {"chatId": chat_id, "text": text}
         if quoted_msg_id:
             p1["quotedMessageId"] = quoted_msg_id
         payloads.append(p1)
 
-        p2: Dict[str, Any] = {"receiver": chat_id, "message": text}
+        p2: dict[str, Any] = {"receiver": chat_id, "message": text}
         if quoted_msg_id:
             p2["quotedMsgId"] = quoted_msg_id
         payloads.append(p2)

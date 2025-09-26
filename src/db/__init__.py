@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 DB exports shim:
 from src.db import get_session, safe_commit
@@ -6,6 +5,7 @@ from src.db import get_session, safe_commit
 - מנסה לייבא מימושים קיימים (session/core/database/db וכו').
 - אם אין, מספק placeholder עם שגיאה ברורה כשהם נקראים.
 """
+
 from importlib import import_module
 
 __all__ = ["get_session", "safe_commit"]

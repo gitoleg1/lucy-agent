@@ -11,7 +11,5 @@ async def require_api_key(
 ):
     token = x_api_key or request.query_params.get("apikey")
     if not token or token != AGENT_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
     return True

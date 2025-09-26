@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import io
-from typing import Optional, Tuple
+from typing import Optional
 
 import paramiko
 
@@ -42,7 +42,7 @@ class SSHSkill:
         private_key: Optional[str] = None,
         passphrase: Optional[str] = None,
         timeout: int = 600,
-    ) -> Tuple[int, str, str]:
+    ) -> tuple[int, str, str]:
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         pkey = _load_pkey(private_key, passphrase) if private_key else None

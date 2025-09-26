@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
-import uuid
+from typing import Optional
 
 from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, declarative_base, mapped_column, relationship
@@ -58,19 +58,17 @@ class Task(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=uuid_str)
     title: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(
-        String, nullable=False, default=TaskStatus.PENDING.value
-    )
+    status: Mapped[str] = mapped_column(String, nullable=False, default=TaskStatus.PENDING.value)
     require_approval: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
     started_at: Mapped[Optional[str]] = mapped_column(String)
     ended_at: Mapped[Optional[str]] = mapped_column(String)
 
-    actions: Mapped[List["Action"]] = relationship(
+    actions: Mapped[list[Action]] = relationship(
         "Action", back_populates="task", cascade="all, delete-orphan"
     )
-    audits: Mapped[List["AuditLog"]] = relationship("AuditLog", back_populates="task")
+    audits: Mapped[list[AuditLog]] = relationship("AuditLog", back_populates="task")
 
     __table_args__ = (
         CheckConstraint(
@@ -88,15 +86,13 @@ class Action(Base):
         String, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
     )
     idx: Mapped[int] = mapped_column(Integer, nullable=False)
-    type: Mapped[str] = mapped_column(
-        String, nullable=False, default=ActionType.shell.value
-    )
+    type: Mapped[str] = mapped_column(String, nullable=False, default=ActionType.shell.value)
     params_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
     updated_at: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
 
-    task: Mapped["Task"] = relationship("Task", back_populates="actions")
-    runs: Mapped[List["Run"]] = relationship(
+    task: Mapped[Task] = relationship("Task", back_populates="actions")
+    runs: Mapped[list[Run]] = relationship(
         "Run", back_populates="action", cascade="all, delete-orphan"
     )
 
@@ -115,9 +111,7 @@ class Run(Base):
     action_id: Mapped[str] = mapped_column(
         String, ForeignKey("actions.id", ondelete="CASCADE"), nullable=False
     )
-    status: Mapped[str] = mapped_column(
-        String, nullable=False, default=RunStatus.PENDING.value
-    )
+    status: Mapped[str] = mapped_column(String, nullable=False, default=RunStatus.PENDING.value)
     started_at: Mapped[Optional[str]] = mapped_column(String)
     ended_at: Mapped[Optional[str]] = mapped_column(String)
     exit_code: Mapped[Optional[int]] = mapped_column(Integer)
@@ -125,7 +119,7 @@ class Run(Base):
     stderr_path: Mapped[Optional[str]] = mapped_column(Text)
     meta_json: Mapped[Optional[str]] = mapped_column(Text)
 
-    action: Mapped["Action"] = relationship("Action", back_populates="runs")
+    action: Mapped[Action] = relationship("Action", back_populates="runs")
 
     __table_args__ = (
         CheckConstraint(
@@ -149,7 +143,7 @@ class Approval(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
     expires_at: Mapped[Optional[str]] = mapped_column(String)
 
-    task: Mapped["Task"] = relationship("Task")
+    task: Mapped[Task] = relationship("Task")
 
     __table_args__ = (
         CheckConstraint(
@@ -177,6 +171,6 @@ class AuditLog(Base):
     data_json: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(String, nullable=False, default=now_iso)
 
-    task: Mapped[Optional["Task"]] = relationship("Task", back_populates="audits")
+    task: Mapped[Optional[Task]] = relationship("Task", back_populates="audits")
 
     __table_args__ = (Index("idx_audit_task_time", "task_id", "created_at"),)

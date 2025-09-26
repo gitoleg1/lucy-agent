@@ -1,11 +1,11 @@
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
 
 class ActionRequest(BaseModel):
     action: Optional[str] = None
-    params: Dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class ActionResult(BaseModel):

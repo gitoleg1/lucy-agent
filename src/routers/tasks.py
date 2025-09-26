@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import subprocess
 import time
-from typing import Any, Dict, List, Literal, Optional
+from pathlib import Path
+from typing import Any, Literal, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -95,14 +95,14 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 # ===== Schemas =====
 class ActionIn(BaseModel):
     type: Literal["shell"] = "shell"
-    params: Dict[str, Any] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class TaskCreate(BaseModel):
     title: str
     description: Optional[str] = None
     require_approval: bool = False
-    actions: List[ActionIn] = Field(default_factory=list)
+    actions: list[ActionIn] = Field(default_factory=list)
 
 
 class ApprovalIn(BaseModel):
@@ -127,7 +127,7 @@ class AuditOut(BaseModel):
     id: str
     task_id: str
     event: str
-    data: Dict[str, Any] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 
 
@@ -141,7 +141,7 @@ class TaskOut(BaseModel):
     updated_at: str
     started_at: Optional[str]
     ended_at: Optional[str]
-    approvals: List[Dict[str, Any]] = Field(default_factory=list)
+    approvals: list[dict[str, Any]] = Field(default_factory=list)
 
 
 # ===== Helpers =====
@@ -150,13 +150,9 @@ RUNS_BASE.mkdir(parents=True, exist_ok=True)
 
 
 def _task_to_out(s, task: Task) -> TaskOut:
-    approvals: List[Dict[str, Any]] = []
+    approvals: list[dict[str, Any]] = []
     try:
-        aps = (
-            s.execute(select(Approval).where(Approval.task_id == task.id))
-            .scalars()
-            .all()
-        )
+        aps = s.execute(select(Approval).where(Approval.task_id == task.id)).scalars().all()
         for a in aps:
             approvals.append(
                 {
@@ -272,11 +268,7 @@ def approve_task(task_id: str, body: ApprovalIn):
         if not t:
             raise HTTPException(status_code=404, detail="Task not found")
 
-        ap = (
-            s.execute(select(Approval).where(Approval.task_id == task_id))
-            .scalars()
-            .first()
-        )
+        ap = s.execute(select(Approval).where(Approval.task_id == task_id)).scalars().first()
         if not ap or ap.token != body.token:
             raise HTTPException(status_code=400, detail="Invalid approval token")
 
@@ -298,7 +290,7 @@ def approve_task(task_id: str, body: ApprovalIn):
         return _task_to_out(s, t)
 
 
-@router.post("/{task_id}/run", response_model=List[RunOut])
+@router.post("/{task_id}/run", response_model=list[RunOut])
 def run_task(task_id: str):
     with get_session() as s:
         t = s.execute(select(Task).where(Task.id == task_id)).scalars().first()
@@ -308,26 +300,20 @@ def run_task(task_id: str):
         if t.require_approval and t.status != "APPROVED":
             raise HTTPException(status_code=400, detail="Task requires approval")
 
-        acts = (
-            s.execute(select(Action).where(Action.task_id == task_id)).scalars().all()
-        )
+        acts = s.execute(select(Action).where(Action.task_id == task_id)).scalars().all()
         if not acts:
             raise HTTPException(status_code=400, detail="No actions to run")
 
-        results: List[RunOut] = []
+        results: list[RunOut] = []
 
         for a in acts:
             if a.type != "shell":
-                raise HTTPException(
-                    status_code=400, detail=f"Unsupported action type: {a.type}"
-                )
+                raise HTTPException(status_code=400, detail=f"Unsupported action type: {a.type}")
 
             params = json.loads(a.params_json or "{}")
             cmd = params.get("cmd")
             if not cmd:
-                raise HTTPException(
-                    status_code=400, detail="shell action missing 'cmd'"
-                )
+                raise HTTPException(status_code=400, detail="shell action missing 'cmd'")
 
             run_id = str(uuid4())
             run_dir = RUNS_BASE / run_id
@@ -413,16 +399,14 @@ def run_task(task_id: str):
                 )
             )
 
-        t.status = (
-            "FAILED" if any(ro.status == "FAILED" for ro in results) else "SUCCEEDED"
-        )
+        t.status = "FAILED" if any(ro.status == "FAILED" for ro in results) else "SUCCEEDED"
         t.updated_at = now_iso()
         safe_commit(s)
 
         return results
 
 
-@router.get("/{task_id}/audit", response_model=List[AuditOut])
+@router.get("/{task_id}/audit", response_model=list[AuditOut])
 def get_audit(task_id: str):
     with get_session() as s:
         rows = (
@@ -435,7 +419,7 @@ def get_audit(task_id: str):
             .all()
         )
 
-        out: List[AuditOut] = []
+        out: list[AuditOut] = []
         for r in rows:
             event = (
                 getattr(r, "event_type", None)
@@ -488,7 +472,7 @@ def _cols(cls):
 def _json_parse(val):
     if isinstance(val, dict):
         return val
-    if isinstance(val, (bytes, bytearray)):
+    if isinstance(val, bytes | bytearray):
         try:
             return json.loads(val.decode("utf-8", "ignore"))
         except Exception:
@@ -525,9 +509,7 @@ def _tail_bytes(path: Optional[str], limit: int = 400) -> Optional[str]:
 _AUTOPILOT_TOKEN = os.environ.get("LUCY_AUTOPILOT_TOKEN", "").strip()
 _TIMEOUT_SEC = int(os.environ.get("LUCY_AUTOPILOT_TIMEOUT_SECONDS", "30"))
 _MIN_INTERVAL_SEC = float(os.environ.get("LUCY_AUTOPILOT_MIN_INTERVAL_SEC", "1.0"))
-_RATE_FILE = Path(
-    os.environ.get("LUCY_AUTOPILOT_RATE_FILE", "/tmp/lucy_autopilot.rate")
-)
+_RATE_FILE = Path(os.environ.get("LUCY_AUTOPILOT_RATE_FILE", "/tmp/lucy_autopilot.rate"))
 
 # Allow/Deny (מחרוזות; allow כ-prefixים, deny כ-substrings)
 _DEFAULT_DENY = [
@@ -555,9 +537,7 @@ _DEFAULT_DENY = [
     "wget -qO- | sh",
 ]
 _ALLOW_PREFIXES = [
-    p.strip()
-    for p in os.environ.get("LUCY_AUTOPILOT_ALLOW", "").split(",")
-    if p.strip()
+    p.strip() for p in os.environ.get("LUCY_AUTOPILOT_ALLOW", "").split(",") if p.strip()
 ]
 _DENY_SUBSTR = [
     d.strip() for d in os.environ.get("LUCY_AUTOPILOT_DENY", "").split(",") if d.strip()
@@ -568,9 +548,9 @@ def _auth_check(req: Request):
     if not _AUTOPILOT_TOKEN:
         # אם אין טוקן בהגדרות — לא מחייבים כרגע (MVP). ל-Hardening הפוך ל-Required.
         return
-    hdr = req.headers.get("x-api-key", "") or req.headers.get(
-        "authorization", ""
-    ).replace("Bearer ", "")
+    hdr = req.headers.get("x-api-key", "") or req.headers.get("authorization", "").replace(
+        "Bearer ", ""
+    )
     if hdr != _AUTOPILOT_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -595,16 +575,12 @@ def _allow_deny_check(cmd: str):
     # אם מוגדר Allow — צריך לעבור אחד מהם (prefix)
     if _ALLOW_PREFIXES:
         if not any(c.startswith(p) for p in _ALLOW_PREFIXES):
-            raise HTTPException(
-                status_code=400, detail="Command not allowed by policy (allowlist)"
-            )
+            raise HTTPException(status_code=400, detail="Command not allowed by policy (allowlist)")
     # Deny substrings
     low = c.lower()
     for bad in _DENY_SUBSTR:
         if bad and bad.lower() in low:
-            raise HTTPException(
-                status_code=400, detail=f"Command blocked by denylist: {bad}"
-            )
+            raise HTTPException(status_code=400, detail=f"Command blocked by denylist: {bad}")
 
 
 def _resource_limiter():
@@ -620,19 +596,13 @@ def _resource_limiter():
                 pass
             try:
                 # זיכרון (כתובת וירטואלית) ~ 512MB ברירת מחדל
-                mem = (
-                    int(os.environ.get("LUCY_AUTOPILOT_MAX_AS_MB", "512")) * 1024 * 1024
-                )
+                mem = int(os.environ.get("LUCY_AUTOPILOT_MAX_AS_MB", "512")) * 1024 * 1024
                 resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
             except Exception:
                 pass
             try:
                 # גודל קובץ פלט מקס' 32MB
-                fs = (
-                    int(os.environ.get("LUCY_AUTOPILOT_MAX_FSIZE_MB", "32"))
-                    * 1024
-                    * 1024
-                )
+                fs = int(os.environ.get("LUCY_AUTOPILOT_MAX_FSIZE_MB", "32")) * 1024 * 1024
                 resource.setrlimit(resource.RLIMIT_FSIZE, (fs, fs))
             except Exception:
                 pass
@@ -645,13 +615,13 @@ def _resource_limiter():
 # ------------------ סכימות I/O ------------------
 class QuickRunIn(BaseModel):
     title: str = "autopilot"
-    actions: List[ActionIn]
+    actions: list[ActionIn]
 
 
 class QuickRunOut(BaseModel):
     task: TaskOut
-    runs: List[RunOut]
-    audit: List[AuditOut]
+    runs: list[RunOut]
+    audit: list[AuditOut]
 
 
 # ------------------ Quick Run ------------------
@@ -705,9 +675,7 @@ def quick_run(payload: QuickRunIn, request: Request):
             next_idx = 1
             if "idx" in A:
                 max_idx = s.scalar(
-                    select(func.max(Action.idx)).where(
-                        Action.task_id == getattr(t_db, "id", None)
-                    )
+                    select(func.max(Action.idx)).where(Action.task_id == getattr(t_db, "id", None))
                 )
                 next_idx = (max_idx or 0) + 1
 
@@ -736,22 +704,18 @@ def quick_run(payload: QuickRunIn, request: Request):
             if "updated_at" in A:
                 a_kwargs["updated_at"] = now_iso()
             if "params_json" in A:
-                a_kwargs["params_json"] = json.dumps(
-                    {"cmd": cmd} if cmd is not None else {}
-                )
+                a_kwargs["params_json"] = json.dumps({"cmd": cmd} if cmd is not None else {})
 
             s.add(Action(**a_kwargs))
         safe_commit(s)
 
     # 3) ריצה לפי idx/id + resource/timeout
-    run_results: List[RunOut] = []
+    run_results: list[RunOut] = []
     with get_session() as s:
         A = _cols(Action)
         order_clause = Action.idx if "idx" in A else Action.id
         acts = s.scalars(
-            select(Action)
-            .where(Action.task_id == getattr(t, "id", None))
-            .order_by(order_clause)
+            select(Action).where(Action.task_id == getattr(t, "id", None)).order_by(order_clause)
         ).all()
 
         if not acts:
@@ -783,13 +747,9 @@ def quick_run(payload: QuickRunIn, request: Request):
                 if "params_json" in A:
                     try:
                         raw = getattr(act, "params_json", None)
-                        if isinstance(raw, (bytes, bytearray)):
+                        if isinstance(raw, bytes | bytearray):
                             raw = raw.decode("utf-8", "ignore")
-                        obj = (
-                            json.loads(raw or "{}")
-                            if isinstance(raw, str)
-                            else (raw or {})
-                        )
+                        obj = json.loads(raw or "{}") if isinstance(raw, str) else (raw or {})
                         if isinstance(obj, dict):
                             cmd_val = obj.get("cmd")
                     except Exception:
@@ -808,9 +768,7 @@ def quick_run(payload: QuickRunIn, request: Request):
 
                 try:
                     if getattr(act, "type", None) != "shell":
-                        raise RuntimeError(
-                            f"Unsupported action type: {getattr(act, 'type', None)}"
-                        )
+                        raise RuntimeError(f"Unsupported action type: {getattr(act, 'type', None)}")
                     if not cmd_val:
                         raise RuntimeError("Missing shell cmd")
 
@@ -881,12 +839,8 @@ def quick_run(payload: QuickRunIn, request: Request):
                             "action_id": getattr(act, "id", None),
                             "exit_code": -1,
                             "error": f"timeout({_TIMEOUT_SEC}s)",
-                            "stdout_tail": _tail_bytes(
-                                getattr(r, "stdout_path", None), 400
-                            ),
-                            "stderr_tail": _tail_bytes(
-                                getattr(r, "stderr_path", None), 400
-                            ),
+                            "stdout_tail": _tail_bytes(getattr(r, "stdout_path", None), 400),
+                            "stderr_tail": _tail_bytes(getattr(r, "stderr_path", None), 400),
                         },
                     )
 
@@ -907,12 +861,8 @@ def quick_run(payload: QuickRunIn, request: Request):
                             "action_id": getattr(act, "id", None),
                             "exit_code": getattr(r, "exit_code", None),
                             "error": str(e),
-                            "stdout_tail": _tail_bytes(
-                                getattr(r, "stdout_path", None), 400
-                            ),
-                            "stderr_tail": _tail_bytes(
-                                getattr(r, "stderr_path", None), 400
-                            ),
+                            "stdout_tail": _tail_bytes(getattr(r, "stdout_path", None), 400),
+                            "stderr_tail": _tail_bytes(getattr(r, "stderr_path", None), 400),
                         },
                     )
 
@@ -936,10 +886,7 @@ def quick_run(payload: QuickRunIn, request: Request):
                 if t_db2 and hasattr(t_db2, "status"):
                     t_db2.status = (
                         "FAILED"
-                        if any(
-                            getattr(ro, "status", None) == "FAILED"
-                            for ro in run_results
-                        )
+                        if any(getattr(ro, "status", None) == "FAILED" for ro in run_results)
                         else "SUCCEEDED"
                     )
                 if t_db2 and hasattr(t_db2, "updated_at"):
@@ -982,12 +929,8 @@ def quick_run(payload: QuickRunIn, request: Request):
                         data={
                             "action_id": ro.action_id,
                             "exit_code": ro.exit_code,
-                            "stdout_tail": _tail_bytes(
-                                getattr(ro, "stdout_path", None), 400
-                            ),
-                            "stderr_tail": _tail_bytes(
-                                getattr(ro, "stderr_path", None), 400
-                            ),
+                            "stdout_tail": _tail_bytes(getattr(ro, "stdout_path", None), 400),
+                            "stderr_tail": _tail_bytes(getattr(ro, "stderr_path", None), 400),
                             "synthetic": True,
                         },
                         created_at=now_iso(),
@@ -999,9 +942,7 @@ def quick_run(payload: QuickRunIn, request: Request):
         t_final = s.scalar(select(Task).where(Task.id == getattr(t, "id", None)))
         task_out = _task_to_out(s, t_final)
 
-    return _fix_timeout_semantics(
-        QuickRunOut(task=task_out, runs=run_results, audit=audit_out)
-    )
+    return _fix_timeout_semantics(QuickRunOut(task=task_out, runs=run_results, audit=audit_out))
 
 
 # ------------------ Agent Shell ------------------
