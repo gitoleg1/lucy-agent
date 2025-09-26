@@ -1,12 +1,14 @@
-from fastapi import APIRouter
-from typing import Any, Dict, List, Optional, Union
 import asyncio
-import asyncssh
+import json
 import time
 import traceback
-import json
-from ..models import ActionRequest, ActionResult
+from typing import Any, Dict, List, Optional, Union
+
+import asyncssh
+from fastapi import APIRouter
+
 from ..db import log_action
+from ..models import ActionRequest, ActionResult
 
 router = APIRouter()
 
@@ -86,7 +88,9 @@ async def run_ssh(req: ActionRequest):
     p: Dict[str, Any] = dict(getattr(req, "params", {}) or {})
     host, username = p.get("host"), p.get("username")
     if not host or not username:
-        return ActionResult(status=False, output="", error="missing 'host' or 'username'")
+        return ActionResult(
+            status=False, output="", error="missing 'host' or 'username'"
+        )
     port = int(p.get("port") or 22)
     timeout = int(p.get("timeout") or 30)
     full_cmd = _normalize_command(
@@ -98,7 +102,13 @@ async def run_ssh(req: ActionRequest):
     if dry or not do_exec:
         msg = f"[DRY-RUN] {username}@{host}:{port} → {full_cmd}"
         await _try_log(
-            "ssh", req, p, True, msg, None, {"dry_run": True, "duration": time.time() - t0}
+            "ssh",
+            req,
+            p,
+            True,
+            msg,
+            None,
+            {"dry_run": True, "duration": time.time() - t0},
         )
         return ActionResult(status=True, output=msg, error=None)
 
@@ -116,7 +126,9 @@ async def run_ssh(req: ActionRequest):
         if p.get("private_key_path"):
             conn_params["client_keys"] = [p["private_key_path"]]
         async with asyncssh.connect(**conn_params) as conn:
-            res = await asyncio.wait_for(conn.run(full_cmd, check=False), timeout=timeout)
+            res = await asyncio.wait_for(
+                conn.run(full_cmd, check=False), timeout=timeout
+            )
         out = (res.stdout or "") + (("\n" + res.stderr) if res.stderr else "")
         ok = res.exit_status == 0
         await _try_log(
@@ -128,7 +140,9 @@ async def run_ssh(req: ActionRequest):
             None if ok else f"exit_status={res.exit_status}",
             {"exit_status": res.exit_status, "duration": time.time() - t0},
         )
-        return ActionResult(status=ok, output=out, error=None if ok else "Command failed")
+        return ActionResult(
+            status=ok, output=out, error=None if ok else "Command failed"
+        )
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
         await _try_log(

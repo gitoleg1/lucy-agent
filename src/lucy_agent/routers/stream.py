@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends
+
 from .security import require_api_key
 
 # רוטור ייעודי ל־/stream עם הגנת API Key ברמת־ראוטר

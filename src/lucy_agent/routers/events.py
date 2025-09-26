@@ -1,10 +1,13 @@
 from __future__ import annotations
+
 import asyncio
 import json
 import time
 from typing import AsyncIterator
+
 from fastapi import APIRouter, Depends
 from starlette.responses import StreamingResponse
+
 from ..security import require_api_key
 
 router = APIRouter(
@@ -29,7 +32,9 @@ def _sse(event: str | None, data: dict) -> bytes:
 async def _gen(task_id: str) -> AsyncIterator[bytes]:
     # התחלה
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    yield _sse("started", {"task_id": task_id, "ts": now, "payload": {"status": "RUNNING"}})
+    yield _sse(
+        "started", {"task_id": task_id, "ts": now, "payload": {"status": "RUNNING"}}
+    )
     # 3 פעימות לב
     for _ in range(3):
         await asyncio.sleep(1)
@@ -37,7 +42,9 @@ async def _gen(task_id: str) -> AsyncIterator[bytes]:
         yield _sse("heartbeat", {"task_id": task_id, "ts": now})
     # סיום
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    yield _sse("done", {"task_id": task_id, "ts": now, "payload": {"status": "SUCCEEDED"}})
+    yield _sse(
+        "done", {"task_id": task_id, "ts": now, "payload": {"status": "SUCCEEDED"}}
+    )
 
 
 @router.get(

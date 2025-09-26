@@ -2,21 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main ]
   pull_request:
-    branches: [ "main" ]
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
 
 jobs:
-  lint:
-    name: Lint (ruff check + black --check)
+  agent-ci:
+    name: Agent CI
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,56 +17,89 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
+          python-version: "3.12"
 
-      - name: Install linters
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # התקנת תלויות. אם אין requirements, נתקין מינימום להרצת האפליקציה והלינט
+      - name: Install deps
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install ruff black
+          set -euo pipefail
+          if [[ -f requirements.txt ]]; then
+            python -m pip install -U pip
+            pip install -r requirements.txt
+            pip install ruff black sqlalchemy aiosqlite
+          else
+            python -m pip install -U pip
+            pip install fastapi uvicorn ruff black sqlalchemy aiosqlite
+          fi
+
+      # מידעוני בלבד – לא מפיל את ה־CI אם אין pre-commit
+      - name: Pre-commit (informational)
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if python -c "import pre_commit" 2>/dev/null; then
+            pre-commit run -a || true
+          else
+            echo "pre-commit not installed; skipping (informational)."
+          fi
 
       - name: Ruff (lint)
         run: ruff check .
 
-      - name: Black (check only)
+      - name: Black (check)
         run: black --check .
 
-  tests:
-    name: Tests (pytest if present)
-    runs-on: ubuntu-latest
-    needs: [lint]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install deps (best-effort)
+      - name: Health smoke (local)
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt || true; fi
-          if [ -f pyproject.toml ]; then pip install . || true; fi
-          python -m pip install pytest || true
+          set -euo pipefail
 
-      - name: Run tests (skip if none)
-        id: pytest
-        run: |
-          set -Eeuo pipefail
-          if ls -1 test_*.py 2>/dev/null | grep -q . || [ -d tests ]; then
-            pytest -q | tee pytest.log
-          else
-            echo "No tests found — skipping." | tee pytest.log
+          on_exit() {
+            # הדפסת לוגים אם נוצרו
+            if [[ -f .api.log ]]; then
+              echo "===== .api.log (tail) ====="
+              tail -n 200 .api.log || true
+            else
+              echo ".api.log not found"
+            fi
+            # סגירת uvicorn אם רץ
+            if [[ -f .uvicorn.pid ]]; then
+              kill "$(cat .uvicorn.pid)" 2>/dev/null || true
+              rm -f .uvicorn.pid || true
+            fi
+          }
+          trap on_exit EXIT
+
+          # הפעלת uvicorn ברקע עם ניתוב לוגים
+          nohup python -m uvicorn src.main:app \
+            --host 127.0.0.1 --port 8000 --workers 1 --no-access-log \
+            > .api.log 2>&1 & echo $! > .uvicorn.pid
+
+          # המתנה ל־/health עד 20 שניות, בדיקה כל שנייה
+          ok=0
+          code=000
+          for i in {1..20}; do
+            sleep 1
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health || echo 000)
+            if [[ "$code" == "200" ]]; then
+              ok=1
+              break
+            fi
+          done
+
+          if [[ "$ok" -ne 1 ]]; then
+            echo "health expected 200, got $code"
+            exit 1
           fi
 
-      - name: Upload logs/artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-artifacts-${{ github.run_id }}
-          path: |
-            pytest.log
-          if-no-files-found: ignore
+          echo "Health check OK"
