@@ -21,3 +21,6 @@ main
 *.log
 .api.log*
 artifacts/
+.venv/
+__pycache__/
+*.pyc
