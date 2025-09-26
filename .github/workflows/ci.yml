@@ -35,6 +35,7 @@ jobs:
           if [[ -f requirements.txt ]]; then
             python -m pip install -U pip
             pip install -r requirements.txt
+            pip install ruff black
           else
             python -m pip install -U pip
             pip install fastapi uvicorn ruff black
