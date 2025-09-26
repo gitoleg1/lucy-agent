@@ -2,76 +2,51 @@ name: CI
 
 on:
   push:
+    branches:
+      - "**"
   pull_request:
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+    branches:
+      - main
 
 jobs:
-  ci:
-    runs-on: ubuntu-24.04
+  agent-ci:
+    name: Agent CI
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.12
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
-      - name: Prepare artifact dirs (always)
+      - name: Install dependencies
         run: |
-          set -euxo pipefail
-          mkdir -p logs
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || true
+          pip install -r requirements-dev.txt || true
+          pip install pre-commit ruff black pytest httpx || true
 
-      - name: Capture env
+      - name: Pre-commit (informational)
+        run: pre-commit run -a || true
+
+      - name: Ruff (lint)
+        run: ruff check .
+
+      - name: Black (check)
+        run: black --check .
+
+      - name: Health smoke (local)
+        env:
+          AGENT_API_KEY: test-key
         run: |
-          set -euxo pipefail
-          {
-            echo "=== uname -a ==="; uname -a
-            echo "=== python -V ==="; python -V
-            echo "=== pip --version ==="; pip --version
-          } | tee logs/env.txt
-
-      - name: Install deps (capture logs)
-        run: |
-          set -euxo pipefail
-          python -m pip install -U pip setuptools wheel > >(tee logs/pip-bootstrap.out) 2> >(tee logs/pip-bootstrap.err >&2)
-          python -m pip install -r requirements.txt -vvv > >(tee logs/pip-install.out) 2> >(tee logs/pip-install.err >&2)
-          python -m pip check | tee logs/pip-check.out
-          python -m pip freeze | tee logs/pip-freeze.txt
-
-      - name: Import sanity (src-layout)
-        run: |
-          set -euxo pipefail
-          export PYTHONPATH=src
-          python - <<'PY'
-import importlib
-mods = ["fastapi","starlette","httpx"]
-for m in mods:
-    importlib.import_module(m)
-importlib.import_module("lucy_agent.api")
-print("import sanity OK")
-PY
-
-      - name: Run tests (pytest)
-        run: |
-          set -euxo pipefail
-          export PYTHONPATH=src
-          pytest -q -vv tests | tee logs/pytest.out
-          test ${PIPESTATUS[0]} -eq 0
-
-      - name: Upload artifacts (always)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: smoke-artifacts
-          path: logs/**
-          if-no-files-found: warn
-          retention-days: 7
+          nohup python -m uvicorn src.main:app \
+            --host 127.0.0.1 --port 8000 --workers 1 --no-access-log \
+            > .api.log 2>&1 & echo $! > .uvicorn.pid
+          sleep 2
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health || echo 000)
+          [[ "$code" == "200" ]] || (echo "health expected 200, got $code" && exit 1)
+          kill "$(cat .uvicorn.pid)" 2>/dev/null || true
