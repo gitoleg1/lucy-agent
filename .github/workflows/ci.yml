@@ -35,10 +35,10 @@ jobs:
           if [[ -f requirements.txt ]]; then
             python -m pip install -U pip
             pip install -r requirements.txt
-            pip install ruff black
+            pip install ruff black sqlalchemy aiosqlite
           else
             python -m pip install -U pip
-            pip install fastapi uvicorn ruff black
+            pip install fastapi uvicorn ruff black sqlalchemy aiosqlite
           fi
 
       # מידעוני בלבד – לא מפיל את ה־CI אם אין pre-commit
