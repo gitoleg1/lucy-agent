@@ -21,3 +21,11 @@ main
 *.log
 .api.log*
 artifacts/
+
+.venv/
+
+# Ignore backup artifacts
+*.bak
+*.bak.*
+*.orig
+*~

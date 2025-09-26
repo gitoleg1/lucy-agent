@@ -1,6 +1,8 @@
+import subprocess
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-import subprocess
+
 from ..models import ActionResult
 
 router = APIRouter()

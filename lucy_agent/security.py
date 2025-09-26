@@ -1,5 +1,6 @@
 import os
-from fastapi import Header, HTTPException, Depends, Request, status
+
+from fastapi import Depends, Header, HTTPException, Request, status
 
 API_KEY_ENV = "AGENT_API_KEY"
 
@@ -22,8 +23,11 @@ def require_api_key(
     provided = header_key or query_key
     if not expected:
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="API key not configured"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="API key not configured",
         )
     if not provided or provided != expected:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
+        )
     return True

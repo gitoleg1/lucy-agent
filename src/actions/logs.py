@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query
-import aiosqlite
 import os
+
+import aiosqlite
+from fastapi import APIRouter, Query
 
 router = APIRouter()
 DB_PATH = os.getenv("LUCY_AGENT_DB", "lucy_agent.db")

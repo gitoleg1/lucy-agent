@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 import os
+from typing import Any, Dict, List, Optional
+
 import httpx
-from typing import Any, Dict, Optional, List
 
 
 class WahaClient:

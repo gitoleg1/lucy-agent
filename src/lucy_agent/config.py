@@ -1,6 +1,7 @@
-from pydantic import BaseModel
 from functools import lru_cache
 import os
+
+from pydantic import BaseModel
 
 
 class Settings(BaseModel):

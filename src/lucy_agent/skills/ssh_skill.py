@@ -1,7 +1,9 @@
 from __future__ import annotations
-from typing import Optional, Tuple
-import paramiko
+
 import io
+from typing import Optional, Tuple
+
+import paramiko
 
 
 def _load_pkey(private_key: str, passphrase: Optional[str] = None) -> paramiko.PKey:

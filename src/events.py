@@ -1,13 +1,15 @@
 from __future__ import annotations
+
+import asyncio
+import datetime as dt
+import json
+import re
+import time
+from typing import Any, AsyncIterator, Dict, Optional
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import AsyncIterator, Dict, Any, Optional
-import asyncio
-import json
-import time
-import re
-import datetime as dt
 
 router = APIRouter(prefix="/stream", tags=["stream"])
 
@@ -44,7 +46,11 @@ def now_iso() -> str:
 
 
 def sse_event(event: str, data: Dict[str, Any] | None) -> bytes:
-    payload = "" if data is None else json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    payload = (
+        ""
+        if data is None
+        else json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+    )
     out = f"event: {event}\n"
     out += f"data: {payload}\n\n"
     return out.encode("utf-8")
@@ -103,7 +109,9 @@ async def _event_stream(task_id: str) -> AsyncIterator[bytes]:
             timeout = max(0.0, heartbeat_interval - (time.time() - last_heartbeat))
             try:
                 evt = await asyncio.wait_for(queue.get(), timeout=timeout)
-                evt_obj = TaskEvent(type=evt["type"], data=evt.get("data"), ts=evt["ts"])
+                evt_obj = TaskEvent(
+                    type=evt["type"], data=evt.get("data"), ts=evt["ts"]
+                )
 
                 if evt_obj.type == "update":
                     norm = normalize_update_payload(task_id, evt_obj.data)
@@ -111,7 +119,11 @@ async def _event_stream(task_id: str) -> AsyncIterator[bytes]:
                     if payload_is_terminal(norm):
                         yield sse_event(
                             "done",
-                            {"task_id": task_id, "ts": now_iso(), "data": norm.get("data", {})},
+                            {
+                                "task_id": task_id,
+                                "ts": now_iso(),
+                                "data": norm.get("data", {}),
+                            },
                         )
                         break
 
