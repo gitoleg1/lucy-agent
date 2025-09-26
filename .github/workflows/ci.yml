@@ -68,7 +68,7 @@ jobs:
             # הדפסת לוגים אם נוצרו
             if [[ -f .api.log ]]; then
               echo "===== .api.log (tail) ====="
-              tail -n +200 .api.log || true
+              tail -n 200 .api.log || true
             else
               echo ".api.log not found"
             fi
