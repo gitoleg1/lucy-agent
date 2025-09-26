@@ -21,3 +21,4 @@ main
 *.log
 .api.log*
 artifacts/
+*.pyc
