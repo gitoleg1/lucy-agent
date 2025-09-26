@@ -27,7 +27,5 @@ def require_api_key(
             detail="API key not configured",
         )
     if not provided or provided != expected:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
-        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
     return True

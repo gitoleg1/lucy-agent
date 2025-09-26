@@ -1,6 +1,5 @@
-from pathlib import Path
 import subprocess
-from typing import Tuple
+from pathlib import Path
 
 
 def ensure_run_dir(run_id: str) -> Path:
@@ -9,7 +8,7 @@ def ensure_run_dir(run_id: str) -> Path:
     return base
 
 
-def run_shell_command(run_id: str, cmd: str) -> Tuple[int, str, str]:
+def run_shell_command(run_id: str, cmd: str) -> tuple[int, str, str]:
     rd = ensure_run_dir(run_id)
     stdout_file = rd / "stdout.log"
     stderr_file = rd / "stderr.log"

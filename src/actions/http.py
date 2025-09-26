@@ -1,8 +1,8 @@
 import json
-from typing import Any, Dict, Optional
+from typing import Any
 
-from fastapi import APIRouter
 import httpx
+from fastapi import APIRouter
 
 from ..db import log_action
 from ..models import ActionRequest, ActionResult
@@ -22,11 +22,11 @@ async def run_http(req: ActionRequest):
       data:    dict/str לגוף טופס/טקסט (אופציונלי)
       timeout: שניות (ברירת מחדל: 10)
     """
-    p: Dict[str, Any] = req.params or {}
+    p: dict[str, Any] = req.params or {}
     method: str = (p.get("method") or "GET").upper()
     url: str = p.get("url") or ""
-    headers: Optional[Dict[str, str]] = p.get("headers")
-    qparams: Optional[Dict[str, Any]] = p.get("params")
+    headers: dict[str, str] | None = p.get("headers")
+    qparams: dict[str, Any] | None = p.get("params")
     json_body: Any = p.get("json")
     data_body: Any = p.get("data")
     timeout: float = float(p.get("timeout") or 10)

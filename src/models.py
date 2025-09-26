@@ -1,14 +1,14 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
 
 class ActionRequest(BaseModel):
-    action: Optional[str] = None
-    params: Dict[str, Any] = Field(default_factory=dict)
+    action: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class ActionResult(BaseModel):
     status: bool
     output: str = ""
-    error: Optional[str] = None
+    error: str | None = None

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Annotated, Any, Dict
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException
 import httpx
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from ..clients.waha_client import WahaClient
 from ..security import require_api_key
@@ -12,17 +12,15 @@ router = APIRouter(prefix="/waha", tags=["waha"])
 
 
 @router.get("/session", dependencies=[Depends(require_api_key)])
-def get_session_info() -> Dict[str, Any]:
+def get_session_info() -> dict[str, Any]:
     try:
         return WahaClient().session_info()
     except httpx.HTTPStatusError as e:
-        raise HTTPException(
-            status_code=e.response.status_code, detail=e.response.text
-        ) from e
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text) from e
 
 
 @router.post("/sendText", dependencies=[Depends(require_api_key)])
-def send_text(payload: Annotated[Dict[str, Any], Body(...)]) -> Dict[str, Any]:
+def send_text(payload: Annotated[dict[str, Any], Body(...)]) -> dict[str, Any]:
     chat_id = payload.get("chatId") or payload.get("receiver")
     text = payload.get("text") or payload.get("message")
     quoted = payload.get("quotedMessageId") or payload.get("quotedMsgId")
@@ -33,6 +31,4 @@ def send_text(payload: Annotated[Dict[str, Any], Body(...)]) -> Dict[str, Any]:
     try:
         return WahaClient().send_text(chat_id=chat_id, text=text, quoted_msg_id=quoted)
     except httpx.HTTPStatusError as e:
-        raise HTTPException(
-            status_code=e.response.status_code, detail=e.response.text
-        ) from e
+        raise HTTPException(status_code=e.response.status_code, detail=e.response.text) from e

@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 import traceback
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Union
 
 import asyncssh
 from fastapi import APIRouter
@@ -18,17 +18,17 @@ def sh_quote(s: str) -> str:
 
 
 def _normalize_command(
-    cmd: Union[str, List[str], None],
-    commands: Optional[List[str]] = None,
-    workdir: Optional[str] = None,
-    env: Optional[Dict[str, str]] = None,
+    cmd: Union[str, list[str], None],
+    commands: list[str] | None = None,
+    workdir: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> str:
-    seq: List[str] = []
+    seq: list[str] = []
     if env:
         seq.append("export " + " ".join(f"{k}={sh_quote(v)}" for k, v in env.items()))
     if workdir:
         seq.append(f"cd {sh_quote(workdir)}")
-    base: List[str] = []
+    base: list[str] = []
     if isinstance(cmd, list):
         base += [str(x) for x in cmd if x]
     elif isinstance(cmd, str) and cmd.strip():
@@ -39,7 +39,7 @@ def _normalize_command(
     return " && ".join(seq) if seq else "true"
 
 
-def _redact(p: Dict[str, Any]) -> Dict[str, Any]:
+def _redact(p: dict[str, Any]) -> dict[str, Any]:
     q = dict(p or {})
     for k in ("password", "passphrase"):
         if q.get(k):
@@ -54,11 +54,11 @@ def _redact(p: Dict[str, Any]) -> Dict[str, Any]:
 async def _try_log(
     action: str,
     request: Any,
-    params: Dict[str, Any],
+    params: dict[str, Any],
     success: bool,
-    output: Optional[str],
-    error: Optional[str],
-    meta: Optional[Dict[str, Any]] = None,
+    output: str | None,
+    error: str | None,
+    meta: dict[str, Any] | None = None,
 ):
     try:
         rq = (
@@ -85,12 +85,10 @@ async def _try_log(
 @router.post("/ssh", response_model=ActionResult)
 async def run_ssh(req: ActionRequest):
     t0 = time.time()
-    p: Dict[str, Any] = dict(getattr(req, "params", {}) or {})
+    p: dict[str, Any] = dict(getattr(req, "params", {}) or {})
     host, username = p.get("host"), p.get("username")
     if not host or not username:
-        return ActionResult(
-            status=False, output="", error="missing 'host' or 'username'"
-        )
+        return ActionResult(status=False, output="", error="missing 'host' or 'username'")
     port = int(p.get("port") or 22)
     timeout = int(p.get("timeout") or 30)
     full_cmd = _normalize_command(
@@ -113,7 +111,7 @@ async def run_ssh(req: ActionRequest):
         return ActionResult(status=True, output=msg, error=None)
 
     try:
-        conn_params: Dict[str, Any] = {
+        conn_params: dict[str, Any] = {
             "host": host,
             "port": port,
             "username": username,
@@ -126,9 +124,7 @@ async def run_ssh(req: ActionRequest):
         if p.get("private_key_path"):
             conn_params["client_keys"] = [p["private_key_path"]]
         async with asyncssh.connect(**conn_params) as conn:
-            res = await asyncio.wait_for(
-                conn.run(full_cmd, check=False), timeout=timeout
-            )
+            res = await asyncio.wait_for(conn.run(full_cmd, check=False), timeout=timeout)
         out = (res.stdout or "") + (("\n" + res.stderr) if res.stderr else "")
         ok = res.exit_status == 0
         await _try_log(
@@ -140,9 +136,7 @@ async def run_ssh(req: ActionRequest):
             None if ok else f"exit_status={res.exit_status}",
             {"exit_status": res.exit_status, "duration": time.time() - t0},
         )
-        return ActionResult(
-            status=ok, output=out, error=None if ok else "Command failed"
-        )
+        return ActionResult(status=ok, output=out, error=None if ok else "Command failed")
     except Exception as e:
         err = f"{type(e).__name__}: {e}"
         await _try_log(

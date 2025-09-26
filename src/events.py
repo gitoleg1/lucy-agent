@@ -5,7 +5,8 @@ import datetime as dt
 import json
 import re
 import time
-from typing import Any, AsyncIterator, Dict, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -14,10 +15,10 @@ from pydantic import BaseModel
 router = APIRouter(prefix="/stream", tags=["stream"])
 
 # === EventBus מינימלי לדוגמה (אפשר להחליף בבאסים הפנימי שלך) ===
-_event_queues: Dict[str, "asyncio.Queue[Dict[str, Any]]"] = {}
+_event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
 
 
-def get_queue(task_id: str) -> "asyncio.Queue[Dict[str, Any]]":
+def get_queue(task_id: str) -> asyncio.Queue[dict[str, Any]]:
     q = _event_queues.get(task_id)
     if q is None:
         q = asyncio.Queue()
@@ -25,18 +26,18 @@ def get_queue(task_id: str) -> "asyncio.Queue[Dict[str, Any]]":
     return q
 
 
-async def publish_update(task_id: str, payload: Dict[str, Any]) -> None:
+async def publish_update(task_id: str, payload: dict[str, Any]) -> None:
     await get_queue(task_id).put({"type": "update", "data": payload, "ts": time.time()})
 
 
-async def publish_done(task_id: str, payload: Dict[str, Any]) -> None:
+async def publish_done(task_id: str, payload: dict[str, Any]) -> None:
     await get_queue(task_id).put({"type": "done", "data": payload, "ts": time.time()})
 
 
 # === מודלים ===
 class TaskEvent(BaseModel):
     type: str  # "heartbeat" | "update" | "done"
-    data: Optional[Dict[str, Any] | str] = None
+    data: dict[str, Any] | str | None = None
     ts: float
 
 
@@ -45,12 +46,8 @@ def now_iso() -> str:
     return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
-def sse_event(event: str, data: Dict[str, Any] | None) -> bytes:
-    payload = (
-        ""
-        if data is None
-        else json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    )
+def sse_event(event: str, data: dict[str, Any] | None) -> bytes:
+    payload = "" if data is None else json.dumps(data, ensure_ascii=False, separators=(",", ":"))
     out = f"event: {event}\n"
     out += f"data: {payload}\n\n"
     return out.encode("utf-8")
@@ -63,12 +60,12 @@ _RE_STATUS = re.compile(
 )
 
 
-def normalize_update_payload(task_id: str, raw: Any) -> Dict[str, Any]:
+def normalize_update_payload(task_id: str, raw: Any) -> dict[str, Any]:
     """
     מחזיר מילון JSON-תקני. אם raw הוא מחרוזת (repr),
     שומר ב-'raw' ומנסה לחלץ 'status'.
     """
-    base: Dict[str, Any] = {"task_id": task_id, "ts": now_iso()}
+    base: dict[str, Any] = {"task_id": task_id, "ts": now_iso()}
     if isinstance(raw, dict):
         base["data"] = raw
         return base
@@ -81,7 +78,7 @@ def normalize_update_payload(task_id: str, raw: Any) -> Dict[str, Any]:
     return base
 
 
-def payload_is_terminal(data: Dict[str, Any]) -> bool:
+def payload_is_terminal(data: dict[str, Any]) -> bool:
     """
     מזהה סיום לפי data.status אם קיים (גם אם חולץ מ-repr).
     """
@@ -109,9 +106,7 @@ async def _event_stream(task_id: str) -> AsyncIterator[bytes]:
             timeout = max(0.0, heartbeat_interval - (time.time() - last_heartbeat))
             try:
                 evt = await asyncio.wait_for(queue.get(), timeout=timeout)
-                evt_obj = TaskEvent(
-                    type=evt["type"], data=evt.get("data"), ts=evt["ts"]
-                )
+                evt_obj = TaskEvent(type=evt["type"], data=evt.get("data"), ts=evt["ts"])
 
                 if evt_obj.type == "update":
                     norm = normalize_update_payload(task_id, evt_obj.data)
@@ -148,7 +143,7 @@ async def _event_stream(task_id: str) -> AsyncIterator[bytes]:
                     }
                     yield sse_event("update", norm)
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield sse_event("heartbeat", {"task_id": task_id, "ts": now_iso()})
                 last_heartbeat = time.time()
                 continue
