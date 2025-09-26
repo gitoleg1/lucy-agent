@@ -1,11 +1,10 @@
 import asyncio
 import os
-from typing import Optional
 
 from .redaction import redact
 
 
-def _env_merge(env: Optional[dict[str, str]]) -> dict[str, str]:
+def _env_merge(env: dict[str, str] | None) -> dict[str, str]:
     base = dict(os.environ)
     if env:
         base.update(env)
@@ -20,8 +19,8 @@ def normalize_command(cmd: str | list[str]) -> list[str]:
 
 async def run_shell(
     cmd: str | list[str],
-    workdir: Optional[str] = None,
-    env: Optional[dict[str, str]] = None,
+    workdir: str | None = None,
+    env: dict[str, str] | None = None,
     timeout: int = 600,
 ):
     argv = normalize_command(cmd)

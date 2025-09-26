@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import io
-from typing import Optional
 
 import paramiko
 
 
-def _load_pkey(private_key: str, passphrase: Optional[str] = None) -> paramiko.PKey:
+def _load_pkey(private_key: str, passphrase: str | None = None) -> paramiko.PKey:
     """
     מנסה לטעון מפתח פרטי מכל הסוגים הנפוצים לפי סדר:
     Ed25519 -> RSA -> ECDSA -> DSS
@@ -38,9 +37,9 @@ class SSHSkill:
         user: str,
         cmd: str,
         port: int = 22,
-        password: Optional[str] = None,
-        private_key: Optional[str] = None,
-        passphrase: Optional[str] = None,
+        password: str | None = None,
+        private_key: str | None = None,
+        passphrase: str | None = None,
         timeout: int = 600,
     ) -> tuple[int, str, str]:
         client = paramiko.SSHClient()

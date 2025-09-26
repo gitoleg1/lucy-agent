@@ -1,5 +1,5 @@
 import json
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 from fastapi import APIRouter
@@ -25,8 +25,8 @@ async def run_http(req: ActionRequest):
     p: dict[str, Any] = req.params or {}
     method: str = (p.get("method") or "GET").upper()
     url: str = p.get("url") or ""
-    headers: Optional[dict[str, str]] = p.get("headers")
-    qparams: Optional[dict[str, Any]] = p.get("params")
+    headers: dict[str, str] | None = p.get("headers")
+    qparams: dict[str, Any] | None = p.get("params")
     json_body: Any = p.get("json")
     data_body: Any = p.get("data")
     timeout: float = float(p.get("timeout") or 10)

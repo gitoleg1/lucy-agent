@@ -6,7 +6,7 @@ import json
 import re
 import time
 from collections.abc import AsyncIterator
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -37,7 +37,7 @@ async def publish_done(task_id: str, payload: dict[str, Any]) -> None:
 # === מודלים ===
 class TaskEvent(BaseModel):
     type: str  # "heartbeat" | "update" | "done"
-    data: Optional[dict[str, Any] | str] = None
+    data: dict[str, Any] | str | None = None
     ts: float
 
 
