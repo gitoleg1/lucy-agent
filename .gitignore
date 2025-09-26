@@ -29,3 +29,4 @@ artifacts/
 *.bak.*
 *.orig
 *~
+*.pyc

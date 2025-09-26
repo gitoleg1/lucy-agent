@@ -1,36 +1,15 @@
+
 [tool.black]
-line-length = 88
-target-version = ["py311"]
-include = '\.pyi?$'
-exclude = '''
-(
-  /(\.git|\.venv|venv|env|build|dist|\.mypy_cache|\.pytest_cache|\.ruff_cache|artifact|artifact_ci)/
-)
-'''
+line-length = 100
 
 [tool.ruff]
-line-length = 88
-target-version = "py311"
-# סט חוקים בסיסי: שגיאות/אזהרות, ייבוא, באגים שכיחים
-select = ["E", "F", "I", "B"]
-ignore = ["E501"]  # נוכל להוסיף בהמשך אם נדרש
-src = ["."]
-exclude = [
-  ".git",
-  ".venv",
-  "venv",
-  "env",
-  "build",
-  "dist",
-  ".mypy_cache",
-  ".pytest_cache",
-  ".ruff_cache",
-  "artifact",
-  "artifact_ci",
-]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "UP"]
+ignore = ["E501"]  # בשלב זה לא נכשלים על אורך שורה
 
 [tool.ruff.lint.isort]
-# יישור לרוחב שורה של 88 ופרופיל Black
-known-first-party = ["."]
+known-first-party = ["lucy_agent", "src"]
 combine-as-imports = true
-force-sort-within-sections = true
+force-single-line = false
